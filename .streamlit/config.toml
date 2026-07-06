@@ -1,0 +1,10 @@
+# Cloudtype(국내 PaaS) 등 프록시 뒤에서 Streamlit이 정상 동작하도록.
+# 포트는 시작 명령의 --server.port ${PORT} 로 주입(여기선 고정하지 않음).
+[server]
+headless = true
+address = "0.0.0.0"
+enableCORS = false
+enableXsrfProtection = false
+
+[browser]
+gatherUsageStats = false
