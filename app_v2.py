@@ -468,7 +468,12 @@ def _sgis_apply_block():
                 st.success(f"전국 시도 {len(sido)}개 · 시군구 {sum(len(v) for v in cache.values())}개 로드됨. "
                            "아래에서 시도→시군구를 고르세요.")
             except Exception as e:
-                st.error(f"지역목록 불러오기 실패: {e}. 쿠키가 유효한지 확인하세요.")
+                if "time" in str(e).lower():
+                    st.error("⏱ SGIS 서버 연결 시간초과 — **쿠키 문제가 아니에요.** 지금 앱이 도는 서버에서 "
+                             "sgis.mods.go.kr에 접속이 안 되는 거예요. 배포된 웹(streamlit.app)은 해외서버라 "
+                             "SGIS 정부서버가 막힙니다 → **본인 PC에서 `python -m streamlit run app_v2.py`로 실행**해 신청하세요.")
+                else:
+                    st.error(f"지역목록 불러오기 실패: {e}")
     rc2.caption("목록을 불러오면 **시도→시군구를 클릭**으로 골라요(코드 자동입력·검증). "
                 "안 불러와도 아래 칸에 코드를 직접 넣어 신청할 수 있어요.")
 
@@ -589,7 +594,12 @@ def _sgis_apply_block():
                 st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
             else:
                 bad = next((r for r in results if r not in ok), None)
-                st.error(f"신청 실패 — 서버 응답이 없거나 오류(타임아웃 포함). {str(bad[2])[:200] if bad else ''}")
+                bmsg = str(bad[2]) if bad else ""
+                if "time" in bmsg.lower():
+                    st.error("⏱ 신청 시간초과 — **쿠키 문제 아님.** 배포된 웹(streamlit.app)은 해외서버라 SGIS "
+                             "정부서버에 접속이 막혀요. **본인 PC에서 `python -m streamlit run app_v2.py`로 실행**해 신청하세요.")
+                else:
+                    st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
             with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
                 for sg, stt, resp, n in results:
                     mark = "✅" if (stt == 200 and "로그인" not in str(resp)) else "❌"
