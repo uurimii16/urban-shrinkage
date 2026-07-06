@@ -27,22 +27,23 @@ import re
 import urllib.parse
 import urllib.request
 
-# ── 신청자 정보(캡처본 그대로 — 필요시 수정) ─────────────────────────────
+# ── 신청자 정보 기본값(개인정보는 비움 — 앱 ①화면에서 입력받아 override) ────────
+#   공개 배포 대비: 이메일·연락처·회사·SGIS계정 등 개인정보는 코드에 두지 않는다.
 APPLICANT = {
-    "param_userkey": "eunice7573",
+    "param_userkey": "",            # SGIS 로그인 계정(아이디)
     "sgis_census_req_sosok_nm": "민간",
     "sgis_census_req_sosok": "001005",
     "sgis_census_req_mokjuk_nm": "공간DB구축",
     "sgis_census_req_mokjuk": "002001",
-    "sgis_census_req_company": "(주)인우",
-    "sgis_census_req_tel_1": "010",
-    "sgis_census_req_tel_2": "4795",
-    "sgis_census_req_tel_3": "8322",
-    "email_id": "leeyourim16",
-    "email_addr": "naver.com",
+    "sgis_census_req_company": "",   # 회사/소속명
+    "sgis_census_req_tel_1": "",     # 연락처
+    "sgis_census_req_tel_2": "",
+    "sgis_census_req_tel_3": "",
+    "email_id": "",                  # 이메일 아이디
+    "email_addr": "naver.com",       # 이메일 도메인
     "email_addr_select": "naver.com",
-    "sgis_census_req_goal": "복합쇠퇴진단 진행",
-    "sgis_census_req_kwaje": "2030 전주시 도시재생전략계획 수립 용역 수행",
+    "sgis_census_req_goal": "복합쇠퇴진단",
+    "sgis_census_req_kwaje": "도시재생 기초자료",
 }
 
 SIGUNGU = ["35011", "35012"]          # 완산구·덕진구
@@ -155,10 +156,11 @@ def make_cart(items, sigungu_codes, only_first=False):
     return cart[:1] if only_first else cart
 
 
-def submit_cart(cookie, cart):
-    """cart → saveRequestData 제출 → (status, response_text)."""
+def submit_cart(cookie, cart, applicant=None):
+    """cart → saveRequestData 제출 → (status, response_text).
+    applicant: 신청자 정보 override dict(앱 화면 입력값). None이면 APPLICANT 기본값."""
     boundary = "WebKitFormBoundary" + uuid.uuid4().hex[:16]
-    body = build_body(cart, boundary)
+    body = build_body(cart, boundary, applicant=applicant)
     return submit(cookie, body, boundary)
 
 # 집계구 통계 대분류: 0=인구, 1=가구, 2=주택, 3=사업체
@@ -211,8 +213,10 @@ def _part(name, value):
     return (f'Content-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n')
 
 
-def build_body(cart, boundary):
-    """saveRequestData multipart 본문 생성(캡처 구조 미러링)."""
+def build_body(cart, boundary, applicant=None):
+    """saveRequestData multipart 본문 생성(캡처 구조 미러링).
+    applicant: 신청자 정보 override dict — 없는 키는 APPLICANT 기본값 사용."""
+    A = {**APPLICANT, **(applicant or {})}
     B = f"------{boundary}"
     out = []
 
@@ -220,25 +224,25 @@ def build_body(cart, boundary):
         out.append(B + "\r\n" + _part(name, value))
 
     # 1) 신청자/공통
-    add("param_userkey", APPLICANT["param_userkey"])
+    add("param_userkey", A["param_userkey"])
     add("aT", "INS")
     add("sgis_census_req_id", "")
     add("old_census_file", "")
     add("inUse", "")
     add("years", "")
-    add("sgis_census_req_sosok_nm", APPLICANT["sgis_census_req_sosok_nm"])
-    add("sgis_census_req_mokjuk_nm", APPLICANT["sgis_census_req_mokjuk_nm"])
-    add("sgis_census_req_sosok", APPLICANT["sgis_census_req_sosok"])
-    add("sgis_census_req_company", APPLICANT["sgis_census_req_company"])
-    add("sgis_census_req_tel_1", APPLICANT["sgis_census_req_tel_1"])
-    add("sgis_census_req_tel_2", APPLICANT["sgis_census_req_tel_2"])
-    add("sgis_census_req_tel_3", APPLICANT["sgis_census_req_tel_3"])
-    add("email_id", APPLICANT["email_id"])
-    add("email_addr", APPLICANT["email_addr"])
-    add("email_addr_select", APPLICANT["email_addr_select"])
-    add("sgis_census_req_mokjuk", APPLICANT["sgis_census_req_mokjuk"])
-    add("sgis_census_req_goal", APPLICANT["sgis_census_req_goal"])
-    add("sgis_census_req_kwaje", APPLICANT["sgis_census_req_kwaje"])
+    add("sgis_census_req_sosok_nm", A["sgis_census_req_sosok_nm"])
+    add("sgis_census_req_mokjuk_nm", A["sgis_census_req_mokjuk_nm"])
+    add("sgis_census_req_sosok", A["sgis_census_req_sosok"])
+    add("sgis_census_req_company", A["sgis_census_req_company"])
+    add("sgis_census_req_tel_1", A["sgis_census_req_tel_1"])
+    add("sgis_census_req_tel_2", A["sgis_census_req_tel_2"])
+    add("sgis_census_req_tel_3", A["sgis_census_req_tel_3"])
+    add("email_id", A["email_id"])
+    add("email_addr", A["email_addr"])
+    add("email_addr_select", A["email_addr_select"])
+    add("sgis_census_req_mokjuk", A["sgis_census_req_mokjuk"])
+    add("sgis_census_req_goal", A["sgis_census_req_goal"])
+    add("sgis_census_req_kwaje", A["sgis_census_req_kwaje"])
     add("concur", "on")
 
     # 2) 대표(첫) 항목 — top-level

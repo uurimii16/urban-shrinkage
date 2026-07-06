@@ -414,7 +414,17 @@ def _sgis_apply_block():
         elif cookie_raw:
             st.caption("⚠️ JSESSIONID·accessToken을 못 찾았어요. 로그인 상태에서 다시 복사해보세요.")
 
-    region = st.text_input("② 지역 시군구코드(쉼표)", value=ss.get("apply_region", "35011,35012"),
+    with st.expander("② 신청자 정보 (SGIS 신청서에 들어감 — 본인 정보 입력)", expanded=not ss.get("apply_userid")):
+        st.caption("SGIS 자료신청서에 채워지는 값이에요. 코드엔 저장 안 되고 이 세션에서만 사용합니다.")
+        ac1, ac2 = st.columns(2)
+        ap_userid = ac1.text_input("SGIS 로그인 아이디", value=ss.get("apply_userid", ""), key="in_apply_userid")
+        ap_company = ac2.text_input("소속/회사명", value=ss.get("apply_company", ""), key="in_apply_company")
+        ap_email = ac1.text_input("이메일(승인 알림 받을 주소)", value=ss.get("apply_email", ""), key="in_apply_email",
+                                  placeholder="hong@naver.com")
+        ap_tel = ac2.text_input("연락처", value=ss.get("apply_tel", ""), key="in_apply_tel", placeholder="010-1234-5678")
+        ap_goal = st.text_input("활용 목적/과제명", value=ss.get("apply_goal", "복합쇠퇴진단"), key="in_apply_goal")
+
+    region = st.text_input("③ 지역 시군구코드(쉼표)", value=ss.get("apply_region", "35011,35012"),
                            key="in_apply_region", help="전주=완산 35011·덕진 35012. 시군구 5자리를 쉼표로. 도 전체가 필요하면 알려주세요.")
     st.caption("📅 **연도는 2000~2024 전체가 자동 수집**됩니다(증감률이 전 기간 최댓값과 비교하기 때문). "
                "특정 연도만 받는 옵션이 필요하면 말씀해주세요.")
@@ -448,10 +458,23 @@ def _sgis_apply_block():
             st.error("받을 항목을 1개 이상 선택하세요.")
         else:
             ss.apply_cookie, ss.apply_region = cookie_raw, region
+            ss.apply_userid, ss.apply_company = ap_userid, ap_company
+            ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
+            # 이메일/연락처 분해 → SGIS 신청서 필드
+            eid, edom = (ap_email.split("@", 1) + [""])[:2] if ap_email else ("", "naver.com")
+            tel = [t for t in ap_tel.replace(" ", "").split("-") if t] if ap_tel else []
+            applicant = {
+                "param_userkey": ap_userid, "sgis_census_req_company": ap_company,
+                "email_id": eid, "email_addr": edom or "naver.com", "email_addr_select": edom or "naver.com",
+                "sgis_census_req_tel_1": tel[0] if len(tel) > 0 else "",
+                "sgis_census_req_tel_2": tel[1] if len(tel) > 1 else "",
+                "sgis_census_req_tel_3": tel[2] if len(tel) > 2 else "",
+                "sgis_census_req_goal": ap_goal or "복합쇠퇴진단",
+            }
             cart = SR.make_cart(items, sgcodes, only_first=test_first)
             with st.spinner(f"{len(cart)}건 신청 전송 중…"):
                 try:
-                    status, resp = SR.submit_cart(cookie, cart)
+                    status, resp = SR.submit_cart(cookie, cart, applicant=applicant)
                 except Exception as e:
                     status, resp = -1, str(e)
             if status == 200 and "로그인" not in resp:
