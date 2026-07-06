@@ -139,6 +139,30 @@ def cached_summarize_folders(folders_tuple):
     return L.summarize_folders(list(folders_tuple)) if hasattr(L, "summarize_folders") else pd.DataFrame()
 
 
+class _NamedBytes:
+    """업로드 파일을 (이름, bytes)로 감싸 loader가 그대로 먹게 함(캐시 키 안정용)."""
+    def __init__(self, name, data):
+        self.name = name
+        self._d = data
+
+    def getvalue(self):
+        return self._d
+
+
+@st.cache_data(show_spinner="원시 파일 정제 중…")
+def cached_load_uploads(files_sig, mapping_items, column_map=None):
+    """업로드 파일 (이름, bytes) 튜플 → raw dict. bytes 기준 캐시 → 재파싱 방지."""
+    mapping = dict(mapping_items) if mapping_items else None
+    cmap = dict(column_map) if isinstance(column_map, tuple) else column_map
+    wrapped = [_NamedBytes(n, d) for n, d in files_sig]
+    return L.load_raw_from_uploaded_files(wrapped, mapping=mapping, column_map=cmap)
+
+
+def _files_sig(files):
+    """업로드 목록 → ((이름, bytes), …) 해시 안정 튜플."""
+    return tuple((getattr(f, "name", "f"), f.getvalue()) for f in (files or []))
+
+
 def xlsx_bytes(df, sheet_name):
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -544,7 +568,7 @@ def _sgis_input_block(mapping_items):
         supp = st.file_uploader("보완 CSV/TXT", type=["csv", "txt", "zip"], accept_multiple_files=True, key="sgis_supp")
         if supp:
             try:
-                supp_raw = L.load_raw_from_uploaded_files(supp, mapping=dict(mapping_items) if mapping_items else None)
+                supp_raw = cached_load_uploads(_files_sig(supp), tuple(mapping_items or []))
                 got2 = {b: len(v) for b, v in supp_raw.items() if len(v)}
                 ss.sgis_supp_raw = supp_raw
                 st.success("보완 파일 인식: " + ", ".join(f"{b}({n})" for b, n in got2.items()))
@@ -657,7 +681,7 @@ def step1_data():
                           "CODE": int(col_code) - 1, "값": int(col_value) - 1}
             try:
                 with st.spinner(f"원시 파일 {len(files)}개 정제 중…"):
-                    raw_new = L.load_raw_from_uploaded_files(files, mapping=mapping, column_map=column_map)
+                    raw_new = cached_load_uploads(_files_sig(files), tuple(mapping_items or []), column_map=tuple(sorted(column_map.items())) if isinstance(column_map, dict) else column_map)
                     split_summary = L.summarize_uploaded_files(files, column_map=column_map) if hasattr(L, "summarize_uploaded_files") else pd.DataFrame()
                 if len(split_summary):
                     with st.expander("분할 CSV 자동 통합 요약", expanded=False):
@@ -682,7 +706,7 @@ def step1_data():
         if drop:                                # ① 드래그앤드롭 우선
             try:
                 with st.spinner(f"업로드 {len(drop)}개(zip 자동해제) 정제 중…"):
-                    raw_new = L.load_raw_from_uploaded_files(drop, mapping=dict(mapping_items) if mapping_items else None)
+                    raw_new = cached_load_uploads(_files_sig(drop), tuple(mapping_items or []))
                     split_summary = L.summarize_uploaded_files(drop) if hasattr(L, "summarize_uploaded_files") else pd.DataFrame()
                 got = {b: len(v) for b, v in raw_new.items() if len(v)}
                 st.success("드래그 파일 인식: " + ", ".join(f"{b}({n})" for b, n in got.items()) if got else "인식된 데이터가 없어요(형식 확인).")
