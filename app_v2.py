@@ -448,24 +448,62 @@ def _sgis_apply_block():
         ap_tel = ac2.text_input("연락처", value=ss.get("apply_tel", ""), key="in_apply_tel", placeholder="010-1234-5678")
         ap_goal = st.text_input("활용 목적/과제명", value=ss.get("apply_goal", "복합쇠퇴진단"), key="in_apply_goal")
 
-    region = st.text_input("③ 지역 시군구코드(쉼표)", value=ss.get("apply_region", "35011,35012"),
-                           key="in_apply_region", help="전주=완산 35011·덕진 35012. 시군구 5자리를 쉼표로.")
-    st.caption("📍 **시군구코드를 넣으면 그 시군구 안의 '집계구' 데이터**(14자리)를 받습니다 — 앱이 집계구→행정동으로 자동 묶어요. "
-               "여러 시군구는 쉼표로(예: `35011,35012`).")
+    # ── ③ 지역 선택 (전국 시도→시군구 목록에서 클릭으로 고르기) ─────────────
+    st.markdown("**③ 지역 선택**")
+    rc1, rc2 = st.columns([1, 2])
+    if rc1.button("📥 전국 지역목록 불러오기", help="SGIS 로그인 쿠키로 전국 시도·시군구 목록을 받아옵니다(1회)."):
+        ck = SR.extract_cookie(cookie_raw or "")
+        if not ck:
+            st.error("먼저 ① 쿠키를 붙여넣어야 지역목록을 받을 수 있어요.")
+        else:
+            try:
+                with st.spinner("전국 시도 목록 불러오는 중…"):
+                    sido = SR.fetch_sido_list(ck)
+                cache, prog = {}, st.progress(0.0)
+                for i, (code, nm) in enumerate(sido):
+                    cache[code] = SR.fetch_sigungu_list(ck, code)
+                    prog.progress((i + 1) / max(len(sido), 1), text=f"{nm} 시군구 …")
+                prog.empty()
+                ss.sido_list, ss.sgg_cache = sido, cache
+                st.success(f"전국 시도 {len(sido)}개 · 시군구 {sum(len(v) for v in cache.values())}개 로드됨. "
+                           "아래에서 시도→시군구를 고르세요.")
+            except Exception as e:
+                st.error(f"지역목록 불러오기 실패: {e}. 쿠키가 유효한지 확인하세요.")
+    rc2.caption("목록을 불러오면 **시도→시군구를 클릭**으로 골라요(코드 자동입력·검증). "
+                "안 불러와도 아래 칸에 코드를 직접 넣어 신청할 수 있어요.")
 
-    # 연도 범위 옵션 (기본: 전체) — 증감률 지표는 전 기간이 있어야 정확
-    yc1, yc2, yc3 = st.columns([2, 2, 3])
-    year_mode = yc1.radio("📅 수집 연도", ["전체(2000~2024)", "직접 지정"],
-                          index=0, key="apply_year_mode", horizontal=False,
-                          help="증감률 지표(인구·사업체·종사자)는 '전 기간 최댓값'과 비교하므로 전체 권장. 특정 연도만 필요하면 직접 지정.")
-    yf = yc2.number_input("시작 연도", 2000, 2024, int(ss.get("apply_yf", 2000)), 1, key="in_apply_yf",
-                          disabled=(year_mode == "전체(2000~2024)"))
-    yt = yc3.number_input("끝 연도", 2000, 2024, int(ss.get("apply_yt", 2024)), 1, key="in_apply_yt",
-                          disabled=(year_mode == "전체(2000~2024)"))
-    if year_mode == "직접 지정":
-        st.caption(f"⚠️ {int(yf)}~{int(yt)}년만 받습니다. 증감률이 이 기간 안에서만 계산돼 전체와 값이 다를 수 있어요.")
+    picked_sgg = []                       # [(code, name)] — 목록에서 고른 시군구
+    if ss.get("sido_list"):
+        sido_map = dict(ss.sido_list)
+        sc1, sc2 = st.columns([1, 2])
+        sido_code = sc1.selectbox("시도", [c for c, _ in ss.sido_list],
+                                  format_func=lambda c: sido_map.get(c, c), key="apply_sido")
+        sgg_opts = ss.get("sgg_cache", {}).get(sido_code, [])
+        sgg_map = dict(sgg_opts)
+        sel = sc2.multiselect("시군구 (여러 개 가능)", [c for c, _ in sgg_opts],
+                              format_func=lambda c: f"{sgg_map.get(c, c)} · {c}", key="apply_sgg_pick")
+        picked_sgg = [(c, sgg_map.get(c, c)) for c in sel]
+        if picked_sgg:
+            st.caption("선택: " + ", ".join(f"{n}({c})" for c, n in picked_sgg))
 
-    st.markdown("**③ 받을 항목**")
+    region = st.text_input("또는 시군구코드 직접 입력(쉼표)", value=ss.get("apply_region", ""),
+                           key="in_apply_region", placeholder="예: 35011,35012",
+                           help="목록을 안 쓰거나 다른 시도 코드를 섞을 때. 위 선택과 합쳐집니다.")
+    st.caption("📍 **시군구코드 = 그 지역 '집계구'(14자리) 데이터**를 받아요 — 앱이 집계구→행정동으로 자동 묶습니다.")
+
+    # ── ④ 수집 연도: 부문별로 개별 선택·삭제 ──────────────────────────────
+    st.markdown("**④ 수집 연도 (부문별로 개별 선택·삭제)**")
+    st.caption("증감률 지표는 여러 해가 있어야 정확 → 기본은 제공되는 전 연도. 필요 없는 해만 X로 빼세요. "
+               "(성연령·건축연도 등 ‘최신’ 항목은 연도와 무관하게 2024 고정)")
+    ss.setdefault("apply_pop_years", list(SR.YEARS_POP))
+    ss.setdefault("apply_biz_years", list(SR.YEARS_BIZ))
+    yc1, yc2 = st.columns(2)
+    yc1.multiselect("인문사회 · 총인구 연도", SR.YEARS_POP, key="apply_pop_years",
+                    help="인구변화율용. SGIS 제공연도: 2000·05·10·15 + 2016~2024(13개년).")
+    yc2.multiselect("산업경제 · 사업체/종사자 연도", SR.YEARS_BIZ, key="apply_biz_years",
+                    help="총사업체·종사자 증감률용. SGIS 제공연도: 2000~2024 매년(25개년).")
+
+    st.markdown("**⑤ 받을 항목**")
     st.caption("✅ 아래 **필수 5종 = 복합쇠퇴 전체세트.** 이것만 다 받으면 전체 결과표가 나와요(기본 선택됨).")
     checked = []
     req_names = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "필수"]
@@ -484,25 +522,40 @@ def _sgis_apply_block():
                              help="처음엔 켜서 1건만 신청→신청내역 확인 후, 끄고 전체 신청 권장.")
     if st.button("🏛 SGIS에 신청", type="primary"):
         cookie = SR.extract_cookie(cookie_raw or "")
-        sgcodes = [s.strip() for s in region.split(",") if s.strip()]
-        items = [(d, c, y, name) for name in checked for (d, c, y) in SR.ITEM_CATALOG[name]]
-        # 연도 직접 지정 시 해당 범위만(스냅샷 항목=성연령·건축은 최신1개년이라 그대로 유지)
-        if year_mode == "직접 지정":
-            lo, hi = min(int(yf), int(yt)), max(int(yf), int(yt))
-            snapshot = {"성연령별인구(최신)", "건축년도별주택(최신)", "연면적별주택(최신)",
-                        "가구총괄(최신)", "세대구성별가구(최신)", "주택유형별주택(최신)", "주택총괄(최신)"}
-            items = [it for it in items if (it[3] in snapshot) or (lo <= int(it[2]) <= hi)]
+        # 지역: 목록에서 고른 것 + 직접 입력을 합침(중복 제거·순서 유지)
+        sgcodes = [c for c, _ in picked_sgg] + [s.strip() for s in region.split(",") if s.strip()]
+        sgcodes = list(dict.fromkeys(sgcodes))
+        # 목록을 불러왔으면 알려진 코드인지 검증 — 오타·미제공 코드는 전송 차단(타임아웃 예방)
+        known = set()
+        for lst in ss.get("sgg_cache", {}).values():
+            known |= {c for c, _ in lst}
+        unknown = [c for c in sgcodes if known and c not in known]
+        # 부문별 선택 연도로 항목 필터(스냅샷=최신 항목은 항상 유지)
+        pop_set = {int(y) for y in ss.get("apply_pop_years", SR.YEARS_POP)}
+        biz_set = {int(y) for y in ss.get("apply_biz_years", SR.YEARS_BIZ)}
+        items = []
+        for name in checked:
+            dom = SR.YEAR_DOMAIN.get(name)
+            for (d, c, y) in SR.ITEM_CATALOG[name]:
+                if name in SR.SNAPSHOT_ITEMS or dom is None:
+                    items.append((d, c, y, name))
+                elif dom[0] == "pop" and int(y) in pop_set:
+                    items.append((d, c, y, name))
+                elif dom[0] == "biz" and int(y) in biz_set:
+                    items.append((d, c, y, name))
         if not cookie:
             st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
         elif not sgcodes:
-            st.error("시군구코드를 1개 이상 입력하세요.")
+            st.error("시군구를 1개 이상 고르거나 코드를 입력하세요.")
+        elif unknown:
+            st.error(f"목록에 없는 시군구코드: {', '.join(unknown)} — 오타이거나 SGIS가 제공하지 않는 지역이에요. "
+                     "위 목록에서 고르면 안전합니다(잘못된 코드는 신청이 타임아웃돼요).")
         elif not items:
-            st.error("받을 항목을 1개 이상 선택하세요.")
+            st.error("받을 항목·연도를 1개 이상 선택하세요.")
         else:
             ss.apply_cookie, ss.apply_region = cookie_raw, region
             ss.apply_userid, ss.apply_company = ap_userid, ap_company
             ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
-            ss.apply_yf, ss.apply_yt = int(yf), int(yt)
             # 이메일/연락처 분해 → SGIS 신청서 필드
             eid, edom = (ap_email.split("@", 1) + [""])[:2] if ap_email else ("", "naver.com")
             tel = [t for t in ap_tel.replace(" ", "").split("-") if t] if ap_tel else []
@@ -514,22 +567,35 @@ def _sgis_apply_block():
                 "sgis_census_req_tel_3": tel[2] if len(tel) > 2 else "",
                 "sgis_census_req_goal": ap_goal or "복합쇠퇴진단",
             }
-            cart = SR.make_cart(items, sgcodes, only_first=test_first)
-            with st.spinner(f"{len(cart)}건 신청 전송 중…"):
-                try:
-                    status, resp = SR.submit_cart(cookie, cart, applicant=applicant)
-                except Exception as e:
-                    status, resp = -1, str(e)
-            if status == 200 and "로그인" not in resp:
-                st.success(f"신청 접수됨 — {len(cart)}건. 약 10분 뒤 **SGIS 승인 이메일** 도착 → 다운로드 → "
-                           f"‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
-                with st.expander(f"신청 내역 {len(cart)}건", expanded=False):
-                    for c in cart:
-                        st.caption(f"· {c[5]}  (detail={c[1]}, year={c[2]}, 집계구 전연도)")
-            elif "로그인" in str(resp):
+            # 시군구별로 나눠 신청 — 서버 부하·타임아웃 예방, 실패도 지역별로 격리
+            results = []
+            with st.spinner(f"{len(sgcodes)}개 시군구 신청 전송 중…"):
+                for sg in sgcodes:
+                    cart = SR.make_cart(items, [sg], only_first=test_first)
+                    try:
+                        stt, resp = SR.submit_cart(cookie, cart, applicant=applicant)
+                    except Exception as e:
+                        stt, resp = -1, str(e)
+                    results.append((sg, stt, resp, len(cart)))
+                    if test_first:
+                        break
+            ok = [r for r in results if r[1] == 200 and "로그인" not in str(r[2])]
+            if any("로그인" in str(r[2]) for r in results):
                 st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
+            elif ok and len(ok) == len(results):
+                st.success(f"신청 접수됨 — 시군구 {len(ok)}곳. 약 10분 뒤 **SGIS 승인 이메일** 도착 → "
+                           "다운로드 → ‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
+            elif ok:
+                st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
             else:
-                st.error(f"신청 실패 (HTTP {status}): {str(resp)[:300]}")
+                bad = next((r for r in results if r not in ok), None)
+                st.error(f"신청 실패 — 서버 응답이 없거나 오류(타임아웃 포함). {str(bad[2])[:200] if bad else ''}")
+            with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
+                for sg, stt, resp, n in results:
+                    mark = "✅" if (stt == 200 and "로그인" not in str(resp)) else "❌"
+                    st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. {str(resp)[:80]}")
+            if test_first and ok:
+                st.info("1건 시험 성공 → 위 ‘먼저 1건만 시험신청’ 체크를 끄고 다시 눌러 전체 신청하세요.")
 
 
 def _sgis_input_block(mapping_items):

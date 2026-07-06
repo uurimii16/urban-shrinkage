@@ -116,6 +116,17 @@ ITEM_META = {
     "주택총괄(최신)":       ("선택", "총주택수(분모) 등 새 지표 만들 때"),
 }
 
+# ── 부문별 개별 연도 선택용 메타 ─────────────────────────────────────────
+#   시계열(전연도) 항목만 연도 선택 대상. name → (부문키, 제공연도리스트)
+YEAR_DOMAIN = {
+    "총인구(전연도)":               ("pop", YEARS_POP),    # 인문사회 — 인구변화율
+    "종사자수(전연도 2000~2024)":    ("biz", YEARS_BIZ),    # 산업경제 — 종사자 증감률
+    "총괄사업체수(전연도 2000~2024)": ("biz", YEARS_BIZ),    # 산업경제 — 총사업체 증감률
+}
+# 최신 1개년(2024)만 신청하는 스냅샷 항목 — 연도 선택과 무관하게 항상 유지
+SNAPSHOT_ITEMS = {"성연령별인구(최신)", "건축년도별주택(최신)", "연면적별주택(최신)",
+                  "가구총괄(최신)", "세대구성별가구(최신)", "주택유형별주택(최신)", "주택총괄(최신)"}
+
 # 앱 '전체 분석에 필요한 데이터' 설명(마크다운)
 NEED_EXPLAIN = """**복합쇠퇴분석 = 11개 지표를 3부문(인문사회·산업경제·물리환경)으로 종합.**
 아래 **5종만** 받으면 전체 결과표가 나옵니다.
@@ -165,6 +176,49 @@ def submit_cart(cookie, cart, applicant=None):
 
 # 집계구 통계 대분류: 0=인구, 1=가구, 2=주택, 3=사업체
 DATA_CATS = {"0": "인구", "1": "가구", "2": "주택", "3": "사업체"}
+
+
+def _post_option(cookie, data):
+    """requestOptionData 로 POST → 응답 HTML 문자열(표준 라이브러리)."""
+    req = urllib.request.Request(OPT_URL, data=urllib.parse.urlencode(data).encode(),
+        headers={"Cookie": cookie, "X-Requested-With": "XMLHttpRequest",
+                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                 "Referer": "https://sgis.mods.go.kr/view/pss/requestData",
+                 "User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        return r.read().decode("utf-8", "replace")
+
+
+def _parse_options(html):
+    """<option value="35011">완산구</option> → [("35011","완산구"), ...].
+    빈 값·'00'·'선택하세요' 같은 플레이스홀더는 제외."""
+    out = []
+    for val, txt in re.findall(r'<option[^>]*value="([^"]*)"[^>]*>(.*?)</option>', html, re.S):
+        val = val.strip()
+        txt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", txt)).strip()
+        if not val or val in ("0", "00") or not txt or "선택" in txt:
+            continue
+        out.append((val, txt))
+    return out
+
+
+def fetch_sido_list(cookie, year="2024"):
+    """전국 시도 목록 [(시도2자리코드, 이름)]. requestOptionData mode=6, year_sido=<year>00."""
+    html = _post_option(cookie, {
+        "sgis_census_id": "1", "sgis_census_data_id": "0", "sgis_census_req_id": "",
+        "year_sido": f"{year}00", "census_output_area_year": AREA_YEAR,
+        "inUse": "inUse1", "years": "years1", "mode": "6"})
+    return _parse_options(html)
+
+
+def fetch_sigungu_list(cookie, sido_code, year="2024"):
+    """해당 시도의 시군구 목록 [(시군구5자리코드, 이름)].
+    mode=6, year_sido=<year><시도2자리> (예: 202435=전북)."""
+    html = _post_option(cookie, {
+        "sgis_census_id": "1", "sgis_census_data_id": "0", "sgis_census_req_id": "",
+        "year_sido": f"{year}{sido_code}", "census_output_area_year": AREA_YEAR,
+        "inUse": "inUse1", "years": "years1", "mode": "6"})
+    return _parse_options(html)
 
 
 def list_items(cookie):
@@ -284,7 +338,7 @@ def submit(cookie, body, boundary):
         "Referer": "https://sgis.mods.go.kr/view/pss/requestData",
         "User-Agent": "Mozilla/5.0",
     })
-    with urllib.request.urlopen(req, timeout=40) as r:
+    with urllib.request.urlopen(req, timeout=90) as r:
         return r.status, r.read().decode("utf-8", "replace")
 
 
