@@ -449,9 +449,21 @@ def _sgis_apply_block():
         ap_goal = st.text_input("활용 목적/과제명", value=ss.get("apply_goal", "복합쇠퇴진단"), key="in_apply_goal")
 
     region = st.text_input("③ 지역 시군구코드(쉼표)", value=ss.get("apply_region", "35011,35012"),
-                           key="in_apply_region", help="전주=완산 35011·덕진 35012. 시군구 5자리를 쉼표로. 도 전체가 필요하면 알려주세요.")
-    st.caption("📅 **연도는 2000~2024 전체가 자동 수집**됩니다(증감률이 전 기간 최댓값과 비교하기 때문). "
-               "특정 연도만 받는 옵션이 필요하면 말씀해주세요.")
+                           key="in_apply_region", help="전주=완산 35011·덕진 35012. 시군구 5자리를 쉼표로.")
+    st.caption("📍 **시군구코드를 넣으면 그 시군구 안의 '집계구' 데이터**(14자리)를 받습니다 — 앱이 집계구→행정동으로 자동 묶어요. "
+               "여러 시군구는 쉼표로(예: `35011,35012`).")
+
+    # 연도 범위 옵션 (기본: 전체) — 증감률 지표는 전 기간이 있어야 정확
+    yc1, yc2, yc3 = st.columns([2, 2, 3])
+    year_mode = yc1.radio("📅 수집 연도", ["전체(2000~2024)", "직접 지정"],
+                          index=0, key="apply_year_mode", horizontal=False,
+                          help="증감률 지표(인구·사업체·종사자)는 '전 기간 최댓값'과 비교하므로 전체 권장. 특정 연도만 필요하면 직접 지정.")
+    yf = yc2.number_input("시작 연도", 2000, 2024, int(ss.get("apply_yf", 2000)), 1, key="in_apply_yf",
+                          disabled=(year_mode == "전체(2000~2024)"))
+    yt = yc3.number_input("끝 연도", 2000, 2024, int(ss.get("apply_yt", 2024)), 1, key="in_apply_yt",
+                          disabled=(year_mode == "전체(2000~2024)"))
+    if year_mode == "직접 지정":
+        st.caption(f"⚠️ {int(yf)}~{int(yt)}년만 받습니다. 증감률이 이 기간 안에서만 계산돼 전체와 값이 다를 수 있어요.")
 
     st.markdown("**③ 받을 항목**")
     st.caption("✅ 아래 **필수 5종 = 복합쇠퇴 전체세트.** 이것만 다 받으면 전체 결과표가 나와요(기본 선택됨).")
@@ -474,6 +486,12 @@ def _sgis_apply_block():
         cookie = SR.extract_cookie(cookie_raw or "")
         sgcodes = [s.strip() for s in region.split(",") if s.strip()]
         items = [(d, c, y, name) for name in checked for (d, c, y) in SR.ITEM_CATALOG[name]]
+        # 연도 직접 지정 시 해당 범위만(스냅샷 항목=성연령·건축은 최신1개년이라 그대로 유지)
+        if year_mode == "직접 지정":
+            lo, hi = min(int(yf), int(yt)), max(int(yf), int(yt))
+            snapshot = {"성연령별인구(최신)", "건축년도별주택(최신)", "연면적별주택(최신)",
+                        "가구총괄(최신)", "세대구성별가구(최신)", "주택유형별주택(최신)", "주택총괄(최신)"}
+            items = [it for it in items if (it[3] in snapshot) or (lo <= int(it[2]) <= hi)]
         if not cookie:
             st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
         elif not sgcodes:
@@ -484,6 +502,7 @@ def _sgis_apply_block():
             ss.apply_cookie, ss.apply_region = cookie_raw, region
             ss.apply_userid, ss.apply_company = ap_userid, ap_company
             ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
+            ss.apply_yf, ss.apply_yt = int(yf), int(yt)
             # 이메일/연락처 분해 → SGIS 신청서 필드
             eid, edom = (ap_email.split("@", 1) + [""])[:2] if ap_email else ("", "naver.com")
             tel = [t for t in ap_tel.replace(" ", "").split("-") if t] if ap_tel else []
