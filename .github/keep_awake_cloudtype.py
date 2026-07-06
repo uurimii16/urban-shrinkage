@@ -13,7 +13,7 @@ import urllib.request
 URL = os.environ.get("CLOUDTYPE_URL", "").strip().rstrip("/")
 if not URL:
     # 배포 전이라 아직 URL이 없으면 조용히 건너뜀(실패로 처리하지 않음).
-    print("CLOUDTYPE_URL 미설정 — 건너뜀. 배포 후 repo Variable에 URL을 넣으세요.")
+    print("CLOUDTYPE_URL 미설정 - 건너뜀. 배포 후 repo Variable에 URL을 넣으세요.")
     raise SystemExit(0)
 
 # 헬스 엔드포인트(가벼움) → 루트 순으로 시도
@@ -42,7 +42,7 @@ for attempt in range(1, 9):          # 최대 8회(재시도 간 15초) ≈ 2분
     time.sleep(15)
 
 if ok:
-    print("앱 깨어남 확인 ✅")
+    print("앱 깨어남 확인 OK")
 else:
-    print("⚠ 200 응답을 못 받음 — Cloudtype 대시보드에서 앱 상태/자동시작 설정을 확인하세요.")
+    print("[경고] 200 응답을 못 받음 - Cloudtype 대시보드에서 앱 상태/자동시작 설정을 확인하세요.")
     raise SystemExit(1)
