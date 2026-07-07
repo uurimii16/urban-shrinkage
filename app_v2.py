@@ -456,48 +456,35 @@ def _sgis_apply_block():
         ap_tel = ac2.text_input("연락처", value=ss.get("apply_tel", ""), key="in_apply_tel", placeholder="010-1234-5678")
         ap_goal = st.text_input("활용 목적/과제명", value=ss.get("apply_goal", "복합쇠퇴진단"), key="in_apply_goal")
 
-    # ── ③ 지역 선택 (전국 시도→시군구 목록에서 클릭으로 고르기) ─────────────
+    # ── ③ 지역 선택 (시도 고르면 그 시도의 시군구를 불러옴) ──────────────────
     st.markdown("**③ 지역 선택**")
-    rc1, rc2 = st.columns([1, 2])
-    if rc1.button("📥 전국 지역목록 불러오기", help="SGIS 로그인 쿠키로 전국 시도·시군구 목록을 받아옵니다(1회)."):
+    st.caption("시도를 고르면 그 시도의 시군구가 자동으로 떠요(쿠키 필요). 여러 시군구를 클릭으로 선택하세요. "
+               "안 되면 아래 칸에 코드를 직접 넣어도 됩니다.")
+    ss.setdefault("sgg_cache", {})
+    sido_opts = SR.SIDO_LIST              # 고정 17개 — 네트워크 불필요, 항상 표시
+    sido_map = dict(sido_opts)
+    sc1, sc2 = st.columns([1, 2])
+    sido_code = sc1.selectbox("시도", [c for c, _ in sido_opts],
+                              format_func=lambda c: sido_map.get(c, c), key="apply_sido")
+    # 선택한 시도의 시군구만 1회 로드(캐시)
+    cache = ss.sgg_cache
+    if sido_code and sido_code not in cache:
         ck = SR.extract_cookie(cookie_raw or "")
         if not ck:
-            st.error("먼저 ① 쿠키를 붙여넣어야 지역목록을 받을 수 있어요.")
+            sc2.info("① 쿠키를 붙여넣으면 시군구 목록이 떠요.")
         else:
             try:
-                with st.spinner("전국 시도 목록 불러오는 중…"):
-                    sido = SR.fetch_sido_list(ck)
-                cache, prog = {}, st.progress(0.0)
-                for i, (code, nm) in enumerate(sido):
-                    cache[code] = SR.fetch_sigungu_list(ck, code)
-                    prog.progress((i + 1) / max(len(sido), 1), text=f"{nm} 시군구 …")
-                prog.empty()
-                ss.sido_list, ss.sgg_cache = sido, cache
-                st.success(f"전국 시도 {len(sido)}개 · 시군구 {sum(len(v) for v in cache.values())}개 로드됨. "
-                           "아래에서 시도→시군구를 고르세요.")
+                with st.spinner(f"{sido_map.get(sido_code)} 시군구 불러오는 중…"):
+                    cache[sido_code] = SR.fetch_sigungu_list(ck, sido_code)
             except Exception as e:
-                if "time" in str(e).lower():
-                    st.error("⏱ SGIS 서버 연결 시간초과 — **쿠키 문제가 아니에요.** 지금 앱이 도는 서버에서 "
-                             "sgis.mods.go.kr에 접속이 안 되는 거예요. 배포된 웹(streamlit.app)은 해외서버라 "
-                             "SGIS 정부서버가 막힙니다 → **본인 PC에서 `python -m streamlit run app_v2.py`로 실행**해 신청하세요.")
-                else:
-                    st.error(f"지역목록 불러오기 실패: {e}")
-    rc2.caption("목록을 불러오면 **시도→시군구를 클릭**으로 골라요(코드 자동입력·검증). "
-                "안 불러와도 아래 칸에 코드를 직접 넣어 신청할 수 있어요.")
-
-    picked_sgg = []                       # [(code, name)] — 목록에서 고른 시군구
-    if ss.get("sido_list"):
-        sido_map = dict(ss.sido_list)
-        sc1, sc2 = st.columns([1, 2])
-        sido_code = sc1.selectbox("시도", [c for c, _ in ss.sido_list],
-                                  format_func=lambda c: sido_map.get(c, c), key="apply_sido")
-        sgg_opts = ss.get("sgg_cache", {}).get(sido_code, [])
-        sgg_map = dict(sgg_opts)
-        sel = sc2.multiselect("시군구 (여러 개 가능)", [c for c, _ in sgg_opts],
-                              format_func=lambda c: f"{sgg_map.get(c, c)} · {c}", key="apply_sgg_pick")
-        picked_sgg = [(c, sgg_map.get(c, c)) for c in sel]
-        if picked_sgg:
-            st.caption("선택: " + ", ".join(f"{n}({c})" for c, n in picked_sgg))
+                sc2.error(f"시군구 불러오기 실패: {e} — 쿠키가 만료됐으면 SGIS 재로그인 후 새 쿠키를 붙여넣으세요.")
+    sgg_opts = cache.get(sido_code, [])
+    sgg_map = dict(sgg_opts)
+    sel = sc2.multiselect("시군구 (여러 개 가능)", [c for c, _ in sgg_opts],
+                          format_func=lambda c: f"{sgg_map.get(c, c)} · {c}", key="apply_sgg_pick")
+    picked_sgg = [(c, sgg_map.get(c, c)) for c in sel]
+    if picked_sgg:
+        st.caption("선택: " + ", ".join(f"{n}({c})" for c, n in picked_sgg))
 
     region = st.text_input("또는 시군구코드 직접 입력(쉼표)", value=ss.get("apply_region", ""),
                            key="in_apply_region", placeholder="예: 35011,35012",
@@ -541,7 +528,9 @@ def _sgis_apply_block():
         known = set()
         for lst in ss.get("sgg_cache", {}).values():
             known |= {c for c, _ in lst}
-        unknown = [c for c in sgcodes if known and c not in known]
+        loaded_sido = set(ss.get("sgg_cache", {}).keys())     # 시군구를 불러온 시도들
+        # 그 시도를 불러온 적 있는데 목록에 없는 코드만 오타로 간주(안 불러온 시도는 검증 skip)
+        unknown = [c for c in sgcodes if c[:2] in loaded_sido and c not in known]
         # 부문별 선택 연도로 항목 필터(스냅샷=최신 항목은 항상 유지)
         dom_years = {dk: {int(y) for y in ss.get(f"apply_years_{dk}", SR.YEAR_DOMAINS[dk][2])}
                      for dk in SR.YEAR_DOMAINS}
