@@ -565,6 +565,8 @@ def _sgis_apply_block():
                      "위 목록에서 고르면 안전합니다(잘못된 코드는 신청이 타임아웃돼요).")
         elif not items:
             st.error("받을 항목·연도를 1개 이상 선택하세요.")
+        elif not ap_email.strip():
+            st.error("② 신청자 정보의 **이메일**을 입력하세요 — 비면 SGIS가 신청을 거부해요(응답 2).")
         else:
             ss.apply_cookie, ss.apply_region = cookie_raw, region
             ss.apply_userid, ss.apply_company = ap_userid, ap_company
@@ -592,7 +594,9 @@ def _sgis_apply_block():
                     results.append((sg, stt, resp, len(cart)))
                     if test_first:
                         break
-            ok = [r for r in results if r[1] == 200 and "로그인" not in str(r[2])]
+            # SGIS saveRequestData 응답: '1'=접수 성공, '2'=거부(신청자정보 누락 등), 그 외=오류
+            ok = [r for r in results if r[1] == 200 and str(r[2]).strip() == "1"]
+            twos = [r for r in results if str(r[2]).strip() == "2"]
             if any("로그인" in str(r[2]) for r in results):
                 st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
             elif ok and len(ok) == len(results):
@@ -600,6 +604,9 @@ def _sgis_apply_block():
                            "다운로드 → ‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
             elif ok:
                 st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
+            elif twos:
+                st.error("신청이 거부됐어요(응답 2) — **② 신청자 정보의 이메일·SGIS 아이디**를 확인하세요. "
+                         "비었거나 형식이 잘못되면 SGIS가 접수하지 않아요. 채우고 다시 신청하세요.")
             else:
                 bad = next((r for r in results if r not in ok), None)
                 bmsg = str(bad[2]) if bad else ""
@@ -610,8 +617,10 @@ def _sgis_apply_block():
                     st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
             with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
                 for sg, stt, resp, n in results:
-                    mark = "✅" if (stt == 200 and "로그인" not in str(resp)) else "❌"
-                    st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. {str(resp)[:80]}")
+                    rs = str(resp).strip()
+                    mark = "✅" if (stt == 200 and rs == "1") else "❌"
+                    hint = " (신청자정보 확인)" if rs == "2" else ""
+                    st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. 응답:{rs[:40]}{hint}")
             if test_first and ok:
                 st.info("1건 시험 성공 → 위 ‘먼저 1건만 시험신청’ 체크를 끄고 다시 눌러 전체 신청하세요.")
 
