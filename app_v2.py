@@ -486,33 +486,30 @@ def _apply_submit_batch(cookie, sgcodes, items, applicant, only_first, progress=
 
 
 def _apply_render_results(results):
-    """신청 결과 판정·표시(응답 1=성공/2=거부/기타). 성공목록 반환."""
-    ok = [r for r in results if r[1] == 200 and str(r[2]).strip() == "1"]
-    twos = [r for r in results if str(r[2]).strip() == "2"]
+    """신청 결과 판정·표시. SGIS saveRequestData 응답: **1=신청됨 · 2=저장됨 → 둘 다 성공**
+    (SGIS 페이지 JS가 1·2 모두 '신청내역으로 이동'하는 성공 처리). 그 외=오류. 성공목록 반환."""
+    ok = [r for r in results if r[1] == 200 and str(r[2]).strip() in ("1", "2")]
+    err = [r for r in results if r not in ok]
     if any("로그인" in str(r[2]) for r in results):
         st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
-    elif ok and len(ok) == len(results):
-        st.success(f"신청 접수됨 — 시군구 {len(ok)}곳. 약 10분 뒤 **SGIS 승인 이메일** 도착 → "
-                   "다운로드 → ‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
+    elif ok and not err:
+        st.success(f"신청 접수됨 — 시군구 {len(ok)}곳(응답 1=신청 / 2=저장, 둘 다 성공). "
+                   "잠시 뒤 **SGIS 승인** → **② 데이터의 ‘☁ 승인 자료 자동 다운로드’** 로 바로 받으세요.")
     elif ok:
-        st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
-    elif twos:
-        st.error("신청이 거부됐어요(응답 2) — **② 신청자 정보의 이메일·SGIS 아이디**를 확인하세요. "
-                 "비었거나 형식이 잘못되면 SGIS가 접수하지 않아요. 채우고 다시 신청하세요.")
+        st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(err)}곳. 아래 결과를 확인하세요.")
     else:
-        bad = next((r for r in results if r not in ok), None)
+        bad = err[0] if err else None
         bmsg = str(bad[2]) if bad else ""
         if "time" in bmsg.lower():
             st.error("⏱ 신청 시간초과 — **쿠키 문제 아님.** 해외서버(streamlit.app)는 SGIS 정부서버 접속이 막혀요. "
                      "**본인 PC 또는 국내서버(Cloudtype)에서 실행**해 신청하세요.")
         else:
             st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
-    with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
+    with st.expander(f"신청 결과 {len(results)}건", expanded=bool(err)):
         for sg, stt, resp, n in results:
             rs = str(resp).strip()
-            mark = "✅" if (stt == 200 and rs == "1") else "❌"
-            hint = " (신청자정보 확인)" if rs == "2" else ""
-            st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. 응답:{rs[:40]}{hint}")
+            mark = "✅" if (stt == 200 and rs in ("1", "2")) else "❌"
+            st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. 응답:{rs[:40]}")
     return ok
 
 
