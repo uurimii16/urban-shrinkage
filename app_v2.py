@@ -1008,20 +1008,30 @@ def step1_data():
         import batch_build as BB
         sgg_codes = BB.list_sigungu(raw)
         st.caption("업로드한 데이터 안의 **모든 시군구를 각각 독립적으로**(그 시군구 행정동·집계구 안에서 표준화) "
-                   "기본 지표·가중치로 진단해 시군구별 xlsx로 만들고, 하나의 zip으로 묶어요. "
-                   "지표·가중치는 기본값 고정, **연도만** 위에서 고른 값을 씁니다.")
+                   "**기본 지표·가중치(디폴트)** 로 진단해 시군구별 xlsx로 만들고, 하나의 zip으로 묶어요. "
+                   "**연도만** 위에서 고른 값을 씁니다. (※ 먼저 SGIS에서 그 시군구들 데이터를 받아 업로드해야 해요)")
         if not sgg_codes:
             st.info("시군구를 인식하지 못했어요. 집계구(14자리)나 5자리 시군구코드가 있는 데이터인지 확인하세요.")
         else:
             head = ", ".join(sgg_codes[:20]) + (" …" if len(sgg_codes) > 20 else "")
             st.markdown(f"인식된 시군구: **{len(sgg_codes)}곳** — {head}")
-            bc1, bc2 = st.columns(2)
-            batch_final_only = bc1.checkbox("최종 4시트만(법적·복합 × 행정동·집계구)", value=True,
-                                            key="batch_final_only",
-                                            help="끄면 중간 DATA·피벗 시트까지 전부 포함(파일이 커짐).")
+            bc1, bc2 = st.columns([2, 1])
+            batch_fmt = bc1.selectbox(
+                "출력 형식", ["디폴트 전체 (함수 포함 · 집계구+행정동 · 최종표 전부)", "최종 4시트만 (값)"],
+                index=0, key="batch_fmt",
+                help="디폴트 전체 = 계산방법·DATA·피벗·역산수식까지 포함한 전체 시트. 파일이 큼.")
             batch_decimals = bc2.number_input("소수점 자릿수", 0, 6, 2, 1, key="batch_decimals")
+            batch_final_only = batch_fmt.startswith("최종")
+            batch_formula = not batch_final_only     # 디폴트 전체일 때 함수(수식) 포함
+            batch_out = st.text_input("저장 폴더 경로(선택 · 로컬 실행 시 각 파일을 여기 착착 저장)",
+                                      value=ss.get("batch_out", ""), key="in_batch_out",
+                                      placeholder=r"예: D:\쇠퇴진단_전국출력",
+                                      help="비우면 zip 다운로드만. 배포 웹에선 서버에 저장돼 의미 없으니 로컬 실행 때만 쓰세요.")
+            st.caption("⏳ 시군구 수가 많으면 오래 걸려요(탭을 닫으면 중단). **229곳 같은 대량은 아래 안내의 "
+                       "`batch_run.py`(터미널 백그라운드 일괄처리)** 를 권장해요.")
             if st.button(f"⚙ 전국 배치 빌드 실행 ({len(sgg_codes)}곳)", type="secondary",
                          use_container_width=True):
+                ss.batch_out = batch_out
                 sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
                 prog = st.progress(0, text=f"0/{len(sgg_codes)} 시군구")
 
@@ -1032,11 +1042,14 @@ def step1_data():
                     zbytes, summary = BB.build_batch_zip(
                         raw, name_map=ss.name_map, sido_name_map=sido_name_map,
                         method="jenks", n_classes=10, decimals=int(batch_decimals),
-                        final_only=batch_final_only, selected_years=selected_years,
+                        final_only=batch_final_only, formula_mode=batch_formula,
+                        selected_years=selected_years, out_dir=(batch_out.strip() or None),
                         year_pop=int(pop_ref), year_biz=int(biz_ref), progress=_cb)
                 ss.batch_zip = zbytes
                 ss.batch_summary = summary
                 prog.progress(100, text="완료")
+                if batch_out.strip():
+                    st.info(f"📁 저장 완료: `{batch_out.strip()}` 폴더에 시군구별 파일 저장됨.")
             if ss.get("batch_zip") is not None:
                 ok = int((ss.batch_summary["상태"] == "OK").sum()) if ss.get("batch_summary") is not None else 0
                 st.success(f"배치 완료 — 성공 {ok} / {len(ss.batch_summary)}곳")

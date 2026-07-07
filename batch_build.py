@@ -16,6 +16,7 @@ batch_build.py — 전국 시군구 '디폴트' 배치 빌드
 from __future__ import annotations
 
 import io
+import os
 import re
 import zipfile
 
@@ -68,9 +69,11 @@ def _ensure_buckets(raw_sub: dict) -> dict:
 
 
 def build_one_workbook(raw_sub: dict, *, name_map=None, method="jenks", n_classes=10,
-                       decimals=2, final_only=True, selected_years=None):
+                       decimals=2, final_only=False, formula_mode=True, selected_years=None):
     """한 시군구 raw_subset → openpyxl Workbook (기본 지표·가중치).
-    각 시군구를 독립 표준화(그 시군구 단위집합 안에서 Z·T)."""
+    각 시군구를 독립 표준화(그 시군구 단위집합 안에서 Z·T).
+    기본값: 전체 시트(final_only=False) + 함수 포함(formula_mode=True) + 집계구·행정동(both).
+    지표·가중치·방향·라벨·부문은 config 기본값(export가 None→C.* 로 채움)."""
     raw_sub = _ensure_buckets(raw_sub)
     dong = E.run(raw_sub, level="dong", grade_method=method, n_classes=int(n_classes))
     jgu = E.run(raw_sub, level="jgu", grade_method=method, n_classes=int(n_classes))
@@ -81,7 +84,8 @@ def build_one_workbook(raw_sub: dict, *, name_map=None, method="jenks", n_classe
         dong_res=dong[:3], jgu_res=jgu[:3],
         legal_dong=legal_dong, legal_jgu=legal_jgu,
         n_classes=int(n_classes), method=method,
-        decimals=decimals, pivot_level="both", final_only=final_only)
+        decimals=decimals, pivot_level="both", final_only=final_only,
+        formula_mode=formula_mode)
     n_decl = int((legal_dong["쇠퇴지역"] == "o").sum()) if len(legal_dong) else 0
     stats = {"n_dong": len(dong[0]), "n_jgu": len(jgu[0]), "n_decl": n_decl}
     return wb, stats
@@ -92,12 +96,16 @@ def _safe_name(s: str) -> str:
 
 
 def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=None,
-                    method="jenks", n_classes=10, decimals=2, final_only=True,
-                    selected_years=None, year_pop=None, year_biz=None, progress=None):
+                    method="jenks", n_classes=10, decimals=2, final_only=False,
+                    formula_mode=True, selected_years=None, year_pop=None, year_biz=None,
+                    out_dir=None, progress=None):
     """여러 시군구 raw → (zip_bytes, 요약 DataFrame).
     sigungu: 처리할 시군구코드 리스트(None=raw 안 전체).
     year_pop/year_biz: 기준연도(엔진 전역에 설정). None이면 config 현재값 유지.
+    out_dir: 지정하면 각 시군구 xlsx를 그 폴더에 '착착' 저장(로컬 실행용). zip은 항상 반환.
     progress(done, total, sgg): 진행 콜백(선택)."""
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
     if year_pop is not None:
         C.YEAR_POP_LATEST = int(year_pop)
     if year_biz is not None:
@@ -118,11 +126,15 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
             try:
                 wb, stats = build_one_workbook(
                     parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
-                    decimals=decimals, final_only=final_only, selected_years=selected_years)
+                    decimals=decimals, final_only=final_only, formula_mode=formula_mode,
+                    selected_years=selected_years)
                 wbuf = io.BytesIO(); wb.save(wbuf); wbuf.seek(0)
                 sname = (sido_name_map or {}).get(sgg[:2], "")
                 fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
                 zf.writestr(fname, wbuf.getvalue())
+                if out_dir:      # 로컬 저장 폴더에 착착 저장
+                    with open(os.path.join(out_dir, fname), "wb") as fh:
+                        fh.write(wbuf.getvalue())
                 rows.append({"시군구코드": sgg, "시도": sname, "파일": fname,
                              "행정동수": stats["n_dong"], "집계구수": stats["n_jgu"],
                              "법적쇠퇴행정동": stats["n_decl"], "상태": "OK"})
@@ -133,9 +145,13 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
             if progress:
                 progress(i + 1, total, sgg)
         summary = pd.DataFrame(rows)
-        # 요약 CSV도 zip에 포함(엑셀에서 바로 열림, cp949)
+        # 요약 CSV도 zip에 포함(엑셀에서 바로 열림, utf-8-sig)
         try:
-            zf.writestr("_요약.csv", summary.to_csv(index=False).encode("utf-8-sig"))
+            csv_bytes = summary.to_csv(index=False).encode("utf-8-sig")
+            zf.writestr("_요약.csv", csv_bytes)
+            if out_dir:
+                with open(os.path.join(out_dir, "_요약.csv"), "wb") as fh:
+                    fh.write(csv_bytes)
         except Exception:
             pass
     buf.seek(0)
