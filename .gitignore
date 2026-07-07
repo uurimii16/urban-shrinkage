@@ -19,3 +19,7 @@ data/
 검증결과_전주.xlsx
 out/
 *.bak
+
+# SGIS 쿠키(민감) 절대 커밋 금지
+cookie.txt
+sgis_probe_region.py

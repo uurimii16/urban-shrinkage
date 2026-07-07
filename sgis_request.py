@@ -196,19 +196,30 @@ def _parse_options(html):
     for val, txt in re.findall(r'<option[^>]*value="([^"]*)"[^>]*>(.*?)</option>', html, re.S):
         val = val.strip()
         txt = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", txt)).strip()
-        if not val or val in ("0", "00") or not txt or "선택" in txt:
+        if not val or val in ("0", "00", "00000") or not txt or "선택" in txt or txt == "전체":
             continue
         out.append((val, txt))
     return out
 
 
-def fetch_sido_list(cookie, year="2024"):
-    """전국 시도 목록 [(시도2자리코드, 이름)]. requestOptionData mode=6, year_sido=<year>00."""
-    html = _post_option(cookie, {
-        "sgis_census_id": "1", "sgis_census_data_id": "0", "sgis_census_req_id": "",
-        "year_sido": f"{year}00", "census_output_area_year": AREA_YEAR,
-        "inUse": "inUse1", "years": "years1", "mode": "6"})
-    return _parse_options(html)
+# SGIS 자료제공 시도 코드(2자리). mode=6 응답은 '시군구' 전용이라 시도는 이 고정표를 쓴다.
+# (실측 검증됨 2026-07-07: 각 코드로 fetch_sigungu_list 호출 시 정상 시군구 반환 —
+#  서울25·부산16·대구9·인천10·광주5·대전5·울산5·세종1·경기44·강원18·충북14·충남16·
+#  전북15·전남22·경북23·경남22·제주2)
+SIDO_LIST = [
+    ("11", "서울특별시"), ("21", "부산광역시"), ("22", "대구광역시"), ("23", "인천광역시"),
+    ("24", "광주광역시"), ("25", "대전광역시"), ("26", "울산광역시"), ("29", "세종특별자치시"),
+    ("31", "경기도"), ("32", "강원도"), ("33", "충청북도"), ("34", "충청남도"),
+    ("35", "전북특별자치도"), ("36", "전라남도"), ("37", "경상북도"), ("38", "경상남도"),
+    ("39", "제주특별자치도"),
+]
+
+
+def fetch_sido_list(cookie=None, year="2024"):
+    """전국 시도 목록 [(2자리코드, 이름)].
+    SGIS mode=6는 시군구 전용이라 시도는 고정표(SIDO_LIST)를 반환(네트워크 호출 없음).
+    cookie/year 인자는 호출부 호환용."""
+    return list(SIDO_LIST)
 
 
 def fetch_sigungu_list(cookie, sido_code, year="2024"):
