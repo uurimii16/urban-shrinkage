@@ -23,3 +23,9 @@ out/
 # SGIS 쿠키(민감) 절대 커밋 금지
 cookie.txt
 sgis_probe_region.py
+sgis_probe_download.py
+
+# ── 검토용 샘플/작업 엑셀 · 엑셀 잠금 임시파일 (커밋 금지) ──
+샘플_*.xlsx
+~$*.xlsx
+*statistics_code.xlsx

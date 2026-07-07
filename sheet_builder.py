@@ -25,6 +25,9 @@ WARN_FILL = PatternFill("solid", fgColor="FFF2CC")
 HEADER_FONT = Font(color="FFFFFF", bold=True)
 BOLD = Font(bold=True)
 
+# 출력 숫자 반올림 자릿수(기본 2). build_integrated_workbook 진입 시 export._apply_decimals가 설정.
+DECIMALS = 2
+
 
 RAW_SHEET_DEFS = {
     "legal_population": ("법적DATA_1.인구총괄(수정)", "to_in", "법적인구"),
@@ -64,6 +67,7 @@ DEFAULT_OPTIONS = {
     "final_complex_dong": True,
     "final_complex_jgu": True,
     "summary": True,
+    "method_doc": True,
 }
 
 
@@ -121,7 +125,7 @@ def _num(v):
         return None
     if math.isnan(f) or math.isinf(f):
         return None
-    return round(f, 6)
+    return round(f, DECIMALS)
 
 
 def _style_header(ws, row: int = 1):
@@ -136,6 +140,77 @@ def _append_note(ws, text: str):
     for cell in ws[ws.max_row]:
         cell.fill = WARN_FILL
         cell.font = BOLD
+
+
+# ── 지표별 산식 설명(한글) — 기본 12지표. 사용자정의는 일반 문구로 대체 ──
+_FORMULA_DOC = {
+    "인구변화율":      "(기준연도 총인구 − 전체연도 중 최다 총인구) ÷ 최다 총인구 × 100",
+    "노년부양비":      "65세 이상 인구 ÷ 15~64세 인구 × 100",
+    "경제활동인구비율": "15~64세 인구 ÷ 총인구 × 100",
+    "소멸위험지수":    "20~39세 여성 인구 ÷ 65세 이상 인구",
+    "총사업체수증감률": "(기준연도 총사업체수 − 전체연도 최다) ÷ 최다 × 100",
+    "총종사자수증감률": "(기준연도 총종사자수 − 전체연도 최다) ÷ 최다 × 100",
+    "제조업증감률":    "(기준연도 제조업 종사자수 − 최다) ÷ 최다 × 100  (차수별 산업코드 합)",
+    "고차산업증감률":  "(기준연도 고차산업 종사자수 − 최다) ÷ 최다 × 100  (차수별 산업코드 합)",
+    "도소매증감률":    "(기준연도 도소매 종사자수 − 최다) ÷ 최다 × 100",
+    "음식숙박증감률":  "(기준연도 음식숙박 종사자수 − 최다) ÷ 최다 × 100",
+    "노후건축물비율":  "2004년 이전 건축 주택수 ÷ 전체 주택수 × 100",
+    "소형주택비율":    "60㎡ 이하 주택수 ÷ 전체 주택수 × 100",
+}
+
+
+def _write_method_doc(ws, indicator_ids, label_map, sector_of, weight, sign_map,
+                      method, n_classes):
+    """계산방법(수식·알고리즘) 설명 시트.
+    - 표준화(Z·T)·가중치·종합·등급 알고리즘을 한글로 설명
+    - 지표별 산식·방향부호·최종가중치 표"""
+    thin = Font(color="444444")
+    def head(text):
+        ws.append([text]); c = ws.cell(row=ws.max_row, column=1)
+        c.fill = HEADER_FILL; c.font = HEADER_FONT
+    def line(text):
+        ws.append([text]); ws.cell(row=ws.max_row, column=1).font = thin
+
+    head("① 표준화 (Z점수 · T점수)")
+    line("Z = (지표값 − 평균) ÷ 모표준편차(STDEV.P)")
+    line("   · 평균·표준편차는 그 단위 집합(행정동 또는 집계구) 전체에서 결측(N/A) 제외하고 계산")
+    line("   · 엑셀 등가:  평균=AVERAGE(범위) ,  모표준편차=STDEV.P(범위)")
+    line("   · 표준편차가 0이면(모두 같은 값) Z = 0 으로 처리")
+    line("T = Z × 방향부호 + 50")
+    line("   · 방향부호(±10): 값이 클수록 쇠퇴가 심하면 +10, 값이 클수록 양호하면 −10")
+    line("   · 즉 일반 T점수(=Z×10+50)에 쇠퇴 방향을 부호로 합친 형태 (평균 50 기준)")
+    ws.append([])
+
+    head("② 가중치 · 부문점수 · 종합")
+    line("최종가중치 = (부문비율 ÷ 100) × (부문 내부비율 ÷ 100)")
+    line("   · 부문비율 : 인문사회/산업경제/물리환경 3부문 사이의 배분(합 100%)")
+    line("   · 내부비율 : 한 부문 안에서 지표들 사이의 배분(부문별 합 100%)")
+    line("부문점수 = Σ ( 지표T × 그 지표 최종가중치 )   (그 부문에 속한 지표만 합산)")
+    line("종합점수 = 인문사회 + 산업경제 + 물리환경  (세 부문점수의 합)")
+    line("   · 엑셀 등가:  가중T = T×가중치 ,  부문 = SUM(부문 가중T들) ,  종합 = SUM(3부문)")
+    ws.append([])
+
+    head("③ 등급")
+    _MNAME = {"jenks": "Natural Breaks(Jenks)", "quantile": "Quantile(등위수)", "pretty": "Pretty(균등간격)"}
+    line(f"분류 방식 : {_MNAME.get(method, method)} · {int(n_classes)}등급")
+    line("종합점수가 클수록 쇠퇴가 심함 → 1등급(가장 쇠퇴) … 큰 등급숫자일수록 양호")
+    ws.append([])
+
+    head("④ 지표별 산식 · 방향 · 최종가중치")
+    ws.append(["지표", "부문", "산식", "방향부호", "최종가중치"])
+    _style_header(ws, ws.max_row)
+    for ind in indicator_ids:
+        label = label_map.get(ind, ind)
+        doc = _FORMULA_DOC.get(ind, "사용자 정의 지표(값/계산식) — ②·③ 설정에서 정의")
+        sec = sector_of.get(ind, "")
+        sign = sign_map.get(ind, "")
+        w = weight.get(ind, 0.0)
+        ws.append([label, sec, doc, f"{'+' if float(sign) >= 0 else ''}{sign}", _num(w)])
+    ws.column_dimensions["A"].width = 20
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 70
+    ws.column_dimensions["D"].width = 10
+    ws.column_dimensions["E"].width = 12
 
 
 def _write_summary(ws, raw, selected_years, options):
@@ -226,6 +301,13 @@ def _write_pivot_formula(ws, df: pd.DataFrame, label: str, source_sheet_title: s
     ws.freeze_panes = "B2"
 
 
+# 법적쇠퇴진단 시트와 산식이 동일한 복합지표 → 법적시트 열 인덱스(VLOOKUP col).
+#   법적시트 열: A단위 B명칭 C인구증감률 D.. F사업체증감률 .. I노후건축물비율 ..
+#   (인구변화율=_growth_vs_max(pop), 총사업체수증감률=_growth_vs_max(biz),
+#    노후건축물비율=derive_old_housing_ratio — 세 산식이 legal_engine과 완전히 동일)
+_LEGAL_VLOOKUP_COL = {"인구변화율": 3, "총사업체수증감률": 6, "노후건축물비율": 9}
+
+
 def _write_indicator_values(ws, scores, key="행정동코드", indicator_ids=None, label_map=None,
                             formula_mode=False, legal_ref_sheet=None):
     indicator_ids = indicator_ids or C.IND_IDS
@@ -236,12 +318,21 @@ def _write_indicator_values(ws, scores, key="행정동코드", indicator_ids=Non
         row_no = ws.max_row + 1
         ws.cell(row=row_no, column=1, value=str(unit))
         for pos, ind in enumerate(indicator_ids, start=2):
-            if formula_mode and ind == "인구변화율" and legal_ref_sheet:
-                ws.cell(row=row_no, column=pos, value=f"=IFERROR(VLOOKUP($A{row_no},'{legal_ref_sheet}'!$A:$L,3,FALSE),\"\")")
+            vcol = _LEGAL_VLOOKUP_COL.get(ind)
+            if formula_mode and vcol and legal_ref_sheet:
+                # 법적 DATA 시트를 역산 참조 → 원시값 추적 가능(같은 산식이므로 값 일치)
+                ws.cell(row=row_no, column=pos,
+                        value=f"=IFERROR(VLOOKUP($A{row_no},'{legal_ref_sheet}'!$A:$L,{vcol},FALSE),\"\")")
             else:
                 value = _num(scores.at[unit, (ind, "값")]) if (ind, "값") in scores.columns else None
                 ws.cell(row=row_no, column=pos, value=value)
     ws.freeze_panes = "B2"
+    # 안내: 법적 참조/직접계산 구분
+    if formula_mode and legal_ref_sheet:
+        ref = [label_map.get(i, i) for i in indicator_ids if i in _LEGAL_VLOOKUP_COL]
+        if ref:
+            _append_note(ws, "법적 DATA 역산 참조(VLOOKUP): " + ", ".join(ref) +
+                         " · 나머지 지표는 계산방법 시트의 산식을 피벗/원시 DATA에 적용한 값")
 
 
 def _write_final_legal(ws, legal_df, name_map, key_label):
@@ -337,11 +428,18 @@ def build_integrated_workbook(
     formula_mode: bool = False,
     pivot_level: str = "dong",
     final_only: bool = False,
+    decimals: int = 2,
 ):
     """원시 DATA 시트 + 피벗 + 최종 진단 시트를 포함하는 통합 Workbook 생성.
     pivot_level = 'dong'(행정동, 기본) | 'jgu'(집계구) | 'both'(둘 다). 복합/피벗 집계 단위.
     final_only = True 면 중간 DATA/피벗/요약을 모두 생략하고 최종 진단 4개 시트만
                  (법적·복합 × 행정동·집계구) 자기완결형 '값'으로 출력(유림_17시 3~6 대응)."""
+    global DECIMALS
+    try:
+        DECIMALS = max(0, min(10, int(decimals)))
+    except Exception:
+        DECIMALS = 2
+    export.DECIMALS = DECIMALS   # export._write_legal/_write_composite 도 같은 자릿수 사용
     opts = normalize_options(sheet_options)
     years = list(selected_years) if selected_years else all_years(raw)
     raw_f = filter_raw_years(raw, years)
@@ -369,6 +467,10 @@ def build_integrated_workbook(
         if not wb.sheetnames:  # 방어: 아무 결과도 없으면 빈 시트 하나
             wb.create_sheet("결과없음")
         return wb
+
+    if opts.get("method_doc", True):
+        _write_method_doc(_sheet(wb, "계산방법(수식·알고리즘)"), indicator_ids, label_map,
+                          sector_of, weight, sign_map, method, n_classes)
 
     if opts.get("summary", True):
         _write_summary(_sheet(wb, "생성요약"), raw_f, years, opts)

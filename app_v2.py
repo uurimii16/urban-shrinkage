@@ -425,6 +425,84 @@ def _merge_raw(primary, secondary):
     return out
 
 
+def _apply_build_items(checked):
+    """선택 항목 + 부문별 선택 연도 → 신청 item 목록((도메인,코드,연도,이름))."""
+    dom_years = {dk: {int(y) for y in ss.get(f"apply_years_{dk}", SR.YEAR_DOMAINS[dk][2])}
+                 for dk in SR.YEAR_DOMAINS}
+    items = []
+    for name in checked:
+        dk = SR.YEAR_DOMAIN.get(name)
+        for (d, c, y) in SR.ITEM_CATALOG[name]:
+            if name in SR.SNAPSHOT_ITEMS or dk is None:
+                items.append((d, c, y, name))
+            elif int(y) in dom_years[dk]:
+                items.append((d, c, y, name))
+    return items
+
+
+def _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal):
+    """신청자 입력 → SGIS saveRequestData 신청서 필드 dict."""
+    eid, edom = (ap_email.split("@", 1) + [""])[:2] if ap_email else ("", "naver.com")
+    tel = [t for t in ap_tel.replace(" ", "").split("-") if t] if ap_tel else []
+    return {
+        "param_userkey": ap_userid, "sgis_census_req_company": ap_company,
+        "email_id": eid, "email_addr": edom or "naver.com", "email_addr_select": edom or "naver.com",
+        "sgis_census_req_tel_1": tel[0] if len(tel) > 0 else "",
+        "sgis_census_req_tel_2": tel[1] if len(tel) > 1 else "",
+        "sgis_census_req_tel_3": tel[2] if len(tel) > 2 else "",
+        "sgis_census_req_goal": ap_goal or "복합쇠퇴진단",
+    }
+
+
+def _apply_submit_batch(cookie, sgcodes, items, applicant, only_first, progress=None):
+    """시군구별로 나눠 신청(서버 부하·타임아웃 예방·지역별 실패 격리). results 반환."""
+    results = []
+    total = 1 if only_first else len(sgcodes)
+    for i, sg in enumerate(sgcodes):
+        cart = SR.make_cart(items, [sg], only_first=only_first)
+        try:
+            stt, resp = SR.submit_cart(cookie, cart, applicant=applicant)
+        except Exception as e:
+            stt, resp = -1, str(e)
+        results.append((sg, stt, resp, len(cart)))
+        if progress:
+            progress(i + 1, total, sg)
+        if only_first:
+            break
+    return results
+
+
+def _apply_render_results(results):
+    """신청 결과 판정·표시(응답 1=성공/2=거부/기타). 성공목록 반환."""
+    ok = [r for r in results if r[1] == 200 and str(r[2]).strip() == "1"]
+    twos = [r for r in results if str(r[2]).strip() == "2"]
+    if any("로그인" in str(r[2]) for r in results):
+        st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
+    elif ok and len(ok) == len(results):
+        st.success(f"신청 접수됨 — 시군구 {len(ok)}곳. 약 10분 뒤 **SGIS 승인 이메일** 도착 → "
+                   "다운로드 → ‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
+    elif ok:
+        st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
+    elif twos:
+        st.error("신청이 거부됐어요(응답 2) — **② 신청자 정보의 이메일·SGIS 아이디**를 확인하세요. "
+                 "비었거나 형식이 잘못되면 SGIS가 접수하지 않아요. 채우고 다시 신청하세요.")
+    else:
+        bad = next((r for r in results if r not in ok), None)
+        bmsg = str(bad[2]) if bad else ""
+        if "time" in bmsg.lower():
+            st.error("⏱ 신청 시간초과 — **쿠키 문제 아님.** 해외서버(streamlit.app)는 SGIS 정부서버 접속이 막혀요. "
+                     "**본인 PC 또는 국내서버(Cloudtype)에서 실행**해 신청하세요.")
+        else:
+            st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
+    with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
+        for sg, stt, resp, n in results:
+            rs = str(resp).strip()
+            mark = "✅" if (stt == 200 and rs == "1") else "❌"
+            hint = " (신청자정보 확인)" if rs == "2" else ""
+            st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. 응답:{rs[:40]}{hint}")
+    return ok
+
+
 def _sgis_apply_block():
     """🏛 SGIS 집계구 자료신청 — 쿠키+지역+항목 선택 → saveRequestData 신청(제출).
     데이터는 승인(약 10분)·다운로드 후 '원시 SGIS CSV 폴더 경로'로 불러온다."""
@@ -482,6 +560,15 @@ def _sgis_apply_block():
     sgg_map = dict(sgg_opts)
     sel = sc2.multiselect("시군구 (여러 개 가능)", [c for c, _ in sgg_opts],
                           format_func=lambda c: f"{sgg_map.get(c, c)} · {c}", key="apply_sgg_pick")
+    if sgg_opts:
+        ba1, ba2 = sc2.columns(2)
+        if ba1.button(f"＋ 이 시도 전체 선택 ({len(sgg_opts)}곳)", use_container_width=True,
+                      help="전국 배치 신청용 — 이 시도의 모든 시군구를 한 번에 선택합니다."):
+            ss.apply_sgg_pick = [c for c, _ in sgg_opts]
+            st.rerun()
+        if ba2.button("－ 선택 비우기", use_container_width=True):
+            ss.apply_sgg_pick = []
+            st.rerun()
     picked_sgg = [(c, sgg_map.get(c, c)) for c in sel]
     if picked_sgg:
         st.caption("선택: " + ", ".join(f"{n}({c})" for c, n in picked_sgg))
@@ -519,7 +606,14 @@ def _sgis_apply_block():
 
     test_first = st.checkbox("먼저 1건만 시험신청(작동 확인용)", value=True, key="apply_test_first",
                              help="처음엔 켜서 1건만 신청→신청내역 확인 후, 끄고 전체 신청 권장.")
-    if st.button("🏛 SGIS에 신청", type="primary"):
+
+    def _persist_apply():
+        ss.apply_cookie, ss.apply_region = cookie_raw, region
+        ss.apply_userid, ss.apply_company = ap_userid, ap_company
+        ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
+
+    ab_sel, ab_all = st.columns([1, 1])
+    if ab_sel.button("🏛 선택 시군구 신청", type="primary", use_container_width=True):
         cookie = SR.extract_cookie(cookie_raw or "")
         # 지역: 목록에서 고른 것 + 직접 입력을 합침(중복 제거·순서 유지)
         sgcodes = [c for c, _ in picked_sgg] + [s.strip() for s in region.split(",") if s.strip()]
@@ -531,17 +625,7 @@ def _sgis_apply_block():
         loaded_sido = set(ss.get("sgg_cache", {}).keys())     # 시군구를 불러온 시도들
         # 그 시도를 불러온 적 있는데 목록에 없는 코드만 오타로 간주(안 불러온 시도는 검증 skip)
         unknown = [c for c in sgcodes if c[:2] in loaded_sido and c not in known]
-        # 부문별 선택 연도로 항목 필터(스냅샷=최신 항목은 항상 유지)
-        dom_years = {dk: {int(y) for y in ss.get(f"apply_years_{dk}", SR.YEAR_DOMAINS[dk][2])}
-                     for dk in SR.YEAR_DOMAINS}
-        items = []
-        for name in checked:
-            dk = SR.YEAR_DOMAIN.get(name)
-            for (d, c, y) in SR.ITEM_CATALOG[name]:
-                if name in SR.SNAPSHOT_ITEMS or dk is None:
-                    items.append((d, c, y, name))
-                elif int(y) in dom_years[dk]:
-                    items.append((d, c, y, name))
+        items = _apply_build_items(checked)
         if not cookie:
             st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
         elif not sgcodes:
@@ -554,61 +638,54 @@ def _sgis_apply_block():
         elif not ap_email.strip():
             st.error("② 신청자 정보의 **이메일**을 입력하세요 — 비면 SGIS가 신청을 거부해요(응답 2).")
         else:
-            ss.apply_cookie, ss.apply_region = cookie_raw, region
-            ss.apply_userid, ss.apply_company = ap_userid, ap_company
-            ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
-            # 이메일/연락처 분해 → SGIS 신청서 필드
-            eid, edom = (ap_email.split("@", 1) + [""])[:2] if ap_email else ("", "naver.com")
-            tel = [t for t in ap_tel.replace(" ", "").split("-") if t] if ap_tel else []
-            applicant = {
-                "param_userkey": ap_userid, "sgis_census_req_company": ap_company,
-                "email_id": eid, "email_addr": edom or "naver.com", "email_addr_select": edom or "naver.com",
-                "sgis_census_req_tel_1": tel[0] if len(tel) > 0 else "",
-                "sgis_census_req_tel_2": tel[1] if len(tel) > 1 else "",
-                "sgis_census_req_tel_3": tel[2] if len(tel) > 2 else "",
-                "sgis_census_req_goal": ap_goal or "복합쇠퇴진단",
-            }
-            # 시군구별로 나눠 신청 — 서버 부하·타임아웃 예방, 실패도 지역별로 격리
-            results = []
+            _persist_apply()
+            applicant = _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal)
             with st.spinner(f"{len(sgcodes)}개 시군구 신청 전송 중…"):
-                for sg in sgcodes:
-                    cart = SR.make_cart(items, [sg], only_first=test_first)
-                    try:
-                        stt, resp = SR.submit_cart(cookie, cart, applicant=applicant)
-                    except Exception as e:
-                        stt, resp = -1, str(e)
-                    results.append((sg, stt, resp, len(cart)))
-                    if test_first:
-                        break
-            # SGIS saveRequestData 응답: '1'=접수 성공, '2'=거부(신청자정보 누락 등), 그 외=오류
-            ok = [r for r in results if r[1] == 200 and str(r[2]).strip() == "1"]
-            twos = [r for r in results if str(r[2]).strip() == "2"]
-            if any("로그인" in str(r[2]) for r in results):
-                st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
-            elif ok and len(ok) == len(results):
-                st.success(f"신청 접수됨 — 시군구 {len(ok)}곳. 약 10분 뒤 **SGIS 승인 이메일** 도착 → "
-                           "다운로드 → ‘원시 SGIS CSV 폴더 경로’로 불러오세요.")
-            elif ok:
-                st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(results) - len(ok)}곳. 아래 결과를 확인하세요.")
-            elif twos:
-                st.error("신청이 거부됐어요(응답 2) — **② 신청자 정보의 이메일·SGIS 아이디**를 확인하세요. "
-                         "비었거나 형식이 잘못되면 SGIS가 접수하지 않아요. 채우고 다시 신청하세요.")
-            else:
-                bad = next((r for r in results if r not in ok), None)
-                bmsg = str(bad[2]) if bad else ""
-                if "time" in bmsg.lower():
-                    st.error("⏱ 신청 시간초과 — **쿠키 문제 아님.** 배포된 웹(streamlit.app)은 해외서버라 SGIS "
-                             "정부서버에 접속이 막혀요. **본인 PC에서 `python -m streamlit run app_v2.py`로 실행**해 신청하세요.")
-                else:
-                    st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
-            with st.expander(f"신청 결과 {len(results)}건", expanded=not (ok and len(ok) == len(results))):
-                for sg, stt, resp, n in results:
-                    rs = str(resp).strip()
-                    mark = "✅" if (stt == 200 and rs == "1") else "❌"
-                    hint = " (신청자정보 확인)" if rs == "2" else ""
-                    st.caption(f"{mark} {sg} — HTTP {stt}, 항목 {n}건. 응답:{rs[:40]}{hint}")
+                results = _apply_submit_batch(cookie, sgcodes, items, applicant, only_first=test_first)
+            ok = _apply_render_results(results)
             if test_first and ok:
                 st.info("1건 시험 성공 → 위 ‘먼저 1건만 시험신청’ 체크를 끄고 다시 눌러 전체 신청하세요.")
+
+    if ab_all.button("🌏 전국 전체 시군구 신청", use_container_width=True,
+                     help="쿠키로 17개 시도의 모든 시군구를 불러와 한 번에 신청합니다(시험신청 무시). 시간이 오래 걸려요."):
+        cookie = SR.extract_cookie(cookie_raw or "")
+        items = _apply_build_items(checked)
+        if not cookie:
+            st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
+        elif not items:
+            st.error("받을 항목·연도를 1개 이상 선택하세요.")
+        elif not ap_email.strip():
+            st.error("② 신청자 정보의 **이메일**을 입력하세요 — 비면 SGIS가 신청을 거부해요(응답 2).")
+        else:
+            _persist_apply()
+            # 17개 시도의 시군구를 모두 수집(캐시 재사용)
+            cache = ss.sgg_cache
+            allcodes = []
+            lp = st.progress(0, text="전국 시군구 목록 수집 중…")
+            for i, (sc, snm) in enumerate(SR.SIDO_LIST):
+                if sc not in cache:
+                    try:
+                        cache[sc] = SR.fetch_sigungu_list(cookie, sc)
+                    except Exception:
+                        cache[sc] = []
+                allcodes += [c for c, _ in cache.get(sc, [])]
+                lp.progress(int((i + 1) / len(SR.SIDO_LIST) * 100),
+                            text=f"{i + 1}/{len(SR.SIDO_LIST)} 시도 · 누적 {len(allcodes)}곳")
+            allcodes = list(dict.fromkeys(allcodes))
+            if not allcodes:
+                st.error("시군구 목록을 못 불러왔어요 — 쿠키 만료 또는 해외IP 차단(국내서버에서 실행)일 수 있어요.")
+            else:
+                applicant = _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal)
+                st.info(f"전국 **{len(allcodes)}개 시군구** 신청을 시작합니다. (‘시험신청’ 체크는 무시하고 전부 전송)")
+                sp = st.progress(0, text=f"0/{len(allcodes)} 신청")
+
+                def _cb(done, total, sg):
+                    sp.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sg}")
+
+                with st.spinner(f"{len(allcodes)}개 시군구 신청 전송 중… (수 분 걸릴 수 있어요)"):
+                    results = _apply_submit_batch(cookie, allcodes, items, applicant,
+                                                  only_first=False, progress=_cb)
+                _apply_render_results(results)
 
 
 def _sgis_input_block(mapping_items):
@@ -926,6 +1003,47 @@ def step1_data():
         st.caption("· 선택 분류 미포함(없어도 됨): " + ", ".join(missing_opt)
                    + " — 소형주택비율 등 ‘복제’ 지표를 쓸 때만 필요해요.")
 
+    # ── 전국 시군구 배치 빌드(디폴트값 · 시군구별 독립 산출) ──────────────────
+    with st.expander("🌏 전국 시군구 배치 빌드 (디폴트값 · 시군구별 독립 산출)", expanded=False):
+        import batch_build as BB
+        sgg_codes = BB.list_sigungu(raw)
+        st.caption("업로드한 데이터 안의 **모든 시군구를 각각 독립적으로**(그 시군구 행정동·집계구 안에서 표준화) "
+                   "기본 지표·가중치로 진단해 시군구별 xlsx로 만들고, 하나의 zip으로 묶어요. "
+                   "지표·가중치는 기본값 고정, **연도만** 위에서 고른 값을 씁니다.")
+        if not sgg_codes:
+            st.info("시군구를 인식하지 못했어요. 집계구(14자리)나 5자리 시군구코드가 있는 데이터인지 확인하세요.")
+        else:
+            head = ", ".join(sgg_codes[:20]) + (" …" if len(sgg_codes) > 20 else "")
+            st.markdown(f"인식된 시군구: **{len(sgg_codes)}곳** — {head}")
+            bc1, bc2 = st.columns(2)
+            batch_final_only = bc1.checkbox("최종 4시트만(법적·복합 × 행정동·집계구)", value=True,
+                                            key="batch_final_only",
+                                            help="끄면 중간 DATA·피벗 시트까지 전부 포함(파일이 커짐).")
+            batch_decimals = bc2.number_input("소수점 자릿수", 0, 6, 2, 1, key="batch_decimals")
+            if st.button(f"⚙ 전국 배치 빌드 실행 ({len(sgg_codes)}곳)", type="secondary",
+                         use_container_width=True):
+                sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
+                prog = st.progress(0, text=f"0/{len(sgg_codes)} 시군구")
+
+                def _cb(done, total, sgg):
+                    prog.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sgg}")
+
+                with st.spinner("시군구별 진단·엑셀 생성 중… (시군구 수에 따라 오래 걸릴 수 있어요)"):
+                    zbytes, summary = BB.build_batch_zip(
+                        raw, name_map=ss.name_map, sido_name_map=sido_name_map,
+                        method="jenks", n_classes=10, decimals=int(batch_decimals),
+                        final_only=batch_final_only, selected_years=selected_years,
+                        year_pop=int(pop_ref), year_biz=int(biz_ref), progress=_cb)
+                ss.batch_zip = zbytes
+                ss.batch_summary = summary
+                prog.progress(100, text="완료")
+            if ss.get("batch_zip") is not None:
+                ok = int((ss.batch_summary["상태"] == "OK").sum()) if ss.get("batch_summary") is not None else 0
+                st.success(f"배치 완료 — 성공 {ok} / {len(ss.batch_summary)}곳")
+                st.dataframe(ss.batch_summary, use_container_width=True, height=240, hide_index=True)
+                st.download_button("⬇ 전국 배치 zip 다운로드", ss.batch_zip, "쇠퇴진단_전국배치.zip",
+                                   "application/zip", type="primary", use_container_width=True)
+
     st.markdown("")
     nav_l, nav_r = st.columns([3, 1])
     if nav_r.button("다음: 설정 →", type="primary", use_container_width=True):
@@ -1191,6 +1309,8 @@ def step2_settings():
                                     help="기본은 Natural(Jenks). 골든본 고정컷과 다를 수 있음(정상).")
             method = {"Natural (Jenks)": "jenks", "Quantile (등위수)": "quantile", "Pretty (균등간격)": "pretty"}[method_label]
             n_classes = st.number_input("등급 수", 2, 20, 10, 1, key="n_classes")
+            decimals = st.number_input("소수점 자릿수(엑셀 값)", 0, 6, 2, 1, key="decimals",
+                                       help="엑셀에 쓰는 통계값(값·Z·T·부문·종합 등)의 반올림 자릿수. 기본 2자리.")
 
             st.markdown("---")
             cnt_base = sum(1 for i in all_inds if origin_all.get(i) == "기본")
@@ -1205,6 +1325,7 @@ def step2_settings():
         "method": method, "n_classes": int(n_classes), "final_weight": final_weight,
         "indicator_ids": active_inds, "label_map": label_all,
         "sector_of": sector_of_all, "sign_map": sign_all,
+        "decimals": int(decimals),
     }
 
     st.markdown("")
@@ -1287,7 +1408,7 @@ def step3_review():
                 label_map=cfg.get("label_map", dict(C.INDLABEL)), sector_of=cfg.get("sector_of", dict(C.SECTOR_OF)),
                 weight=weight_map, sign_map=cfg.get("sign_map", dict(C.SIGN)),
                 code_label_map=ss.code_label_map, formula_mode=download_mode.startswith("수식"),
-                pivot_level=ss.pivot_level)
+                pivot_level=ss.pivot_level, decimals=int(cfg.get("decimals", 2)))
             buf = io.BytesIO(); wb.save(buf); buf.seek(0)
         st.success("개별 시트 제작 완료.")
         st.download_button("⬇ 개별 시트 xlsx 다운로드", buf.getvalue(), "쇠퇴진단_개별시트.xlsx",
@@ -1440,7 +1561,7 @@ def step4_run():
             indicator_ids=indicator_ids, label_map=label_map, sector_of=sector_of,
             weight=weight_map, sign_map=sign_map, code_label_map=ss.code_label_map,
             formula_mode=download_mode.startswith("수식"), pivot_level=ss.pivot_level,
-            final_only=ss.get("final_only", False))
+            final_only=ss.get("final_only", False), decimals=int(cfg.get("decimals", 2)))
         if download_mode.startswith("수식") and not ss.get("final_only", False):
             for sn in ("전주시 복합쇠퇴지수(행정동)", "전주시 복합쇠퇴지수(집계구)"):
                 if sn in wb.sheetnames and not str(wb[sn]["C3"].value).startswith("="):

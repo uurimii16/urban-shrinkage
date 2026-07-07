@@ -22,6 +22,9 @@ _HEADER_FILL = PatternFill("solid", fgColor="1F4E78")
 _HEADER_FONT = Font(color="FFFFFF", bold=True)
 _SUB_FILL = PatternFill("solid", fgColor="D9E1F2")
 
+# 출력 숫자 반올림 자릿수(기본 2). build_workbook/build_integrated_workbook 진입 시 설정.
+DECIMALS = 2
+
 
 # ── 코드 → 한글 항목명 (원시 long 시트 '항목명' 열용, best-effort) ──
 _AGE_LABEL = {
@@ -117,7 +120,7 @@ def _write_composite(ws, scores, comp, grades, ind_grades, name_map, key_label,
 def _num(v):
     try:
         f = float(v)
-        return round(f, 6)
+        return round(f, DECIMALS)
     except Exception:
         return None
 
@@ -190,13 +193,32 @@ def _write_legal(ws, legal_df, name_map, key_label):
     ws.freeze_panes = 'C2'
 
 
+def _apply_decimals(decimals):
+    """출력 반올림 자릿수를 export/sheet_builder 양쪽 전역에 반영(기본 2)."""
+    global DECIMALS
+    try:
+        d = int(decimals)
+    except Exception:
+        d = 2
+    d = max(0, min(10, d))
+    DECIMALS = d
+    try:
+        import sheet_builder as _sb
+        _sb.DECIMALS = d
+    except Exception:
+        pass
+    return d
+
+
 def build_workbook(raw, dong_res, jgu_res, name_map=None,
                    n_classes=10, method='jenks', include_raw=True,
                    legal_dong=None, legal_jgu=None,
-                   indicator_ids=None, label_map=None):
+                   indicator_ids=None, label_map=None, decimals=2):
     """엔진 결과 → openpyxl Workbook.
     dong_res/jgu_res = (scores, comp, grades) 튜플.
-    legal_dong/legal_jgu = legal_engine.run_legal 결과 DataFrame(선택)."""
+    legal_dong/legal_jgu = legal_engine.run_legal 결과 DataFrame(선택).
+    decimals = 출력 숫자 반올림 자릿수(기본 2)."""
+    _apply_decimals(decimals)
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
 
@@ -237,9 +259,11 @@ def build_integrated_workbook(raw, *, selected_years=None, sheet_options=None,
                               indicator_ids=None, label_map=None,
                               sector_of=None, weight=None,
                               sign_map=None, code_label_map=None,
-                              formula_mode=False, pivot_level="dong", final_only=False):
+                              formula_mode=False, pivot_level="dong", final_only=False,
+                              decimals=2):
     """원시 DATA 개별 시트 + 피벗 + 최종 진단을 한 xlsx로 병합한다."""
     import sheet_builder
+    _apply_decimals(decimals)
     return sheet_builder.build_integrated_workbook(
         raw,
         selected_years=selected_years,
@@ -260,4 +284,5 @@ def build_integrated_workbook(raw, *, selected_years=None, sheet_options=None,
         formula_mode=formula_mode,
         pivot_level=pivot_level,
         final_only=final_only,
+        decimals=decimals,
     )
