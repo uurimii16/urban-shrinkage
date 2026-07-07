@@ -43,8 +43,10 @@
 1. Cloudtype **API 키 발급**: 오른쪽 위 스페이스 아이콘 → 스페이스 설정 → **인증** → **새 API 키 생성** → 복사.
 2. GitHub **Secret 등록**: 리포 → Settings → Secrets and variables → **Actions** → **New repository secret**
    → Name `CLOUDTYPE_TOKEN`, Secret = 위 API 키 → Add secret.
-3. 끝. `.github/workflows/cloudtype-redeploy.yml`이 **한국시간 09·13·17시에 Cloudtype API로 재배포**
-   → 강제중지됐어도 다시 켜짐. (project=urban-shrinkage, stage=main, workload=app 기준으로 박혀 있음)
+3. 끝. `.github/workflows/cloudtype-redeploy.yml`이 **10분마다 헬스체크** →
+   살아있으면 warm 유지(콜드스타트 방지), **죽어있으면 즉시 Cloudtype API로 재배포**(자동복구).
+   → 강제중지돼도 10분 내 자동으로 다시 켜져 동료가 느린 순간을 거의 안 겪음.
+   (project=urban-shrinkage, stage=main, workload=app 기준으로 박혀 있음)
 
 **확인:** GitHub 리포 → Actions 탭 → "Cloudtype Auto Redeploy" → **Run workflow**(수동 실행) →
 초록 체크(✓)로 끝나고 몇 분 뒤 URL이 열리면 성공. 실패(빨강)면 로그 열어 에러문구 확인

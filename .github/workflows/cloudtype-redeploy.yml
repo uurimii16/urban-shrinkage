@@ -1,36 +1,52 @@
-name: Cloudtype Auto Redeploy (keep alive)
+name: Cloudtype Keep-Alive & Auto-Heal
 
-# Cloudtype 무료 플랜은 '하루 1회 강제 중지'가 있어 그 시간대엔 URL이 404가 된다.
-# 단순 HTTP 핑으로는 안 켜지고 '재배포'해야 다시 켜진다.
-# 이 워크플로는 Cloudtype 공식 API(cloudtype-github-actions/deploy)로 앱을 재배포해
-# 강제중지된 앱을 새 컨테이너로 다시 켠다. 자동배포 토글/웹훅이 없어도 동작한다.
+# 10분마다:
+#  1) 앱 헬스체크(살아있나) — 살아있으면 그 요청 자체가 warm 유지(콜드스타트 방지)
+#  2) 죽어있으면(무료 '하루 1회 강제 중지' 등) → Cloudtype API로 즉시 재배포해 되살림
+# 사람이 기다리는 게 아니라 백그라운드에서 미리 켜두므로, 강제중지 후에도 10분 내 복구.
 #
-# ★ 사전 준비(딱 1번): GitHub Secret 등록
-#   리포 Settings → Secrets and variables → Actions → New repository secret
-#   Name = CLOUDTYPE_TOKEN, Secret = Cloudtype API 키(스페이스 설정 → 인증 → API키 생성)
+# ★ 필요: GitHub Secret CLOUDTYPE_TOKEN (= Cloudtype API 키). 이미 등록됨.
 
 on:
   schedule:
-    # UTC 기준. 한국시간(KST=UTC+9)으로 09시, 13시, 17시에 재배포 → 낮 근무시간 커버.
-    - cron: "0 0,4,8 * * *"
-  workflow_dispatch:   # 필요할 때 손으로 즉시 실행하는 버튼
+    - cron: "*/10 * * * *"   # 10분마다
+  workflow_dispatch:          # 손으로 즉시 실행
 
 concurrency:
-  group: cloudtype-redeploy
+  group: cloudtype-heal
   cancel-in-progress: false
 
 jobs:
-  redeploy:
+  heal:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cloudtype 재배포 (앱 다시 켜기)
+      - name: 헬스체크 (앱이 살아있는지)
+        id: health
+        env:
+          URL: https://port-0-urban-shrinkage-mr9vlx4ea220fe3d.sel3.cloudtype.app
+        run: |
+          up=false
+          for i in $(seq 1 6); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/_stcore/health" || echo 000)
+            echo "시도 $i: /_stcore/health -> $code"
+            if [ "$code" = "200" ]; then up=true; break; fi
+            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/" || echo 000)
+            echo "시도 $i: / -> $code"
+            if [ "$code" = "200" ]; then up=true; break; fi
+            sleep 10
+          done
+          echo "up=$up" >> "$GITHUB_OUTPUT"
+          echo "==> 결과: up=$up (true=정상, false=죽음→재배포)"
+
+      - name: 죽어있으면 Cloudtype 재배포 (자동복구)
+        if: steps.health.outputs.up != 'true'
         uses: cloudtype-github-actions/deploy@v1
         with:
           token: ${{ secrets.CLOUDTYPE_TOKEN }}
-          project: urban-shrinkage      # 프로젝트 이름
-          stage: main                   # 배포환경(스테이지) 이름
+          project: urban-shrinkage
+          stage: main
           yaml: |
             name: app
             app: dockerfile
