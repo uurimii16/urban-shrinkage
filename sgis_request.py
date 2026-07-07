@@ -247,6 +247,60 @@ def fetch_sigungu_list(cookie, sido_code, year="2024"):
     return _parse_options(html)
 
 
+# ── 승인 자료 자동 다운로드 (신청→승인 후) ──────────────────────────────────
+#   흐름(브라우저 분석으로 확정):
+#     1) GET  /view/pss/downloadList        → 승인·다운로드 가능 목록(HTML)
+#        각 행: 신청번호(req_id) · 자료명 · 생성일 · 만료일 · zip경로(/census/reqdoc/<번호>.zip)
+#     2) POST /contents/include/download.jsp (filename=<zip경로>) → 실제 zip 바이트
+#   ※ SGIS 정부서버라 국내 IP에서만 동작(해외=차단).
+DL_LIST_URL = "https://sgis.mods.go.kr/view/pss/downloadList"
+DL_FILE_URL = "https://sgis.mods.go.kr/contents/include/download.jsp"
+
+
+def fetch_download_list(cookie):
+    """다운로드 가능(승인완료) 목록 파싱 → [{req_id, label, date, expire, zippath}]."""
+    req = urllib.request.Request(DL_LIST_URL, headers={
+        "Cookie": cookie, "User-Agent": "Mozilla/5.0",
+        "Referer": "https://sgis.mods.go.kr/view/index",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "ko-KR,ko;q=0.9"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        html = r.read().decode("utf-8", "replace")
+    m = re.search(r"<tbody.*?</tbody>", html, re.S | re.I)
+    body = m.group(0) if m else html
+    out = []
+    for tr in re.findall(r"<tr.*?</tr>", body, re.S | re.I):
+        oc = re.search(r"census_download\([^)]*?,\s*['\"]([^'\"]+\.zip)['\"]", tr)
+        if not oc:
+            continue
+        zippath = oc.group(1)
+        rid = re.search(r"sgis_census_req_id=(\d+)", tr)
+        tds = [re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", td)).strip()
+               for td in re.findall(r"<td.*?</td>", tr, re.S | re.I)]
+        out.append({
+            "req_id": (rid.group(1) if rid else (tds[0] if tds else "")),
+            "label": tds[2] if len(tds) > 2 else "",
+            "date": tds[3] if len(tds) > 3 else "",
+            "expire": tds[4] if len(tds) > 4 else "",
+            "zippath": zippath,
+        })
+    return out
+
+
+def download_zip(cookie, zippath):
+    """POST download.jsp (filename=zip경로) → zip 바이트. 실패 시 예외."""
+    data = urllib.parse.urlencode({"filename": zippath, "path": ""}).encode()
+    req = urllib.request.Request(DL_FILE_URL, data=data, headers={
+        "Cookie": cookie, "User-Agent": "Mozilla/5.0",
+        "Referer": "https://sgis.mods.go.kr/view/pss/downloadList",
+        "Content-Type": "application/x-www-form-urlencoded"})
+    with urllib.request.urlopen(req, timeout=120) as r:
+        blob = r.read()
+    if blob[:2] != b"PK":
+        raise ValueError(f"zip이 아님(응답 앞부분: {blob[:60]!r}) — 쿠키 만료/만료된 자료일 수 있음")
+    return blob
+
+
 def list_items(cookie):
     """SGIS에서 '선택 가능한 모든 세부항목 코드'를 조회해 출력.
     ITEMS에 넣을 (data_id, detail_code, year) 를 여기서 골라 쓰면 됨."""

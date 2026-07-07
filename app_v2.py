@@ -768,6 +768,63 @@ def step1_apply():
         goto(2)
 
 
+def _sgis_download_block(mapping_items):
+    """☁ SGIS 승인 자료 자동 다운로드 — 신청→승인 후, 쿠키로 승인 zip을 받아 바로 raw로.
+    (SGIS 정부서버라 국내 IP에서만 동작. 데이터신청과 같은 JSESSIONID·accessToken 사용.)"""
+    ss.setdefault("dl_items", None)
+    ss.setdefault("dl_files", None)
+    st.caption("신청 → **승인(약 10분, 이메일)** 후, SGIS 로그인 쿠키로 **승인된 자료 zip을 자동으로 받아 바로 불러옵니다.** "
+               "여러 건을 한 번에 받아 전국 배치 빌드로 이어갈 수 있어요. (국내 IP에서만 동작)")
+    ck_raw = st.text_area("SGIS 쿠키 (F12 → 아무 요청 'Copy as cURL' 통째로 붙여넣기)",
+                          value=ss.get("apply_cookie", ""), height=80, key="dl_cookie_raw",
+                          help="JSESSIONID·accessToken만 자동 추출해요. 신청 화면에 넣은 쿠키와 같은 걸 써도 됩니다.")
+    if st.button("📋 승인된 자료 목록 불러오기"):
+        ck = SR.extract_cookie(ck_raw or "")
+        if not ck:
+            st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 SGIS 로그인/복사를 다시).")
+        else:
+            try:
+                with st.spinner("SGIS 다운로드 목록 조회 중…"):
+                    ss.dl_items = SR.fetch_download_list(ck)
+                ss.apply_cookie = ck_raw
+                if not ss.dl_items:
+                    st.warning("다운로드 가능한(승인완료) 자료가 없어요. 승인 이메일을 기다리거나 SGIS 신청내역을 확인하세요.")
+            except Exception as e:
+                st.error(f"목록 불러오기 실패: {e} — 쿠키가 만료됐으면 SGIS 재로그인 후 새 쿠키. "
+                         "(해외서버에서 실행하면 SGIS가 차단해요 → 국내 PC/Cloudtype에서 실행)")
+    items = ss.get("dl_items")
+    if items:
+        st.dataframe(pd.DataFrame(items)[["req_id", "label", "date", "expire"]],
+                     use_container_width=True, height=240, hide_index=True)
+        labels = [f"{it['req_id']} · {it['label'][:34]} (만료 {it['expire']})" for it in items]
+        pick = st.multiselect("받을 자료 선택(기본 전체)", list(range(len(items))),
+                              default=list(range(len(items))), format_func=lambda i: labels[i], key="dl_pick")
+        if st.button(f"⬇ 선택 {len(pick)}건 다운로드 → 데이터로 불러오기", type="primary"):
+            ck = SR.extract_cookie(ck_raw or "")
+            files, errs = [], []
+            prog = st.progress(0, text="다운로드 중…")
+            for n, i in enumerate(pick):
+                it = items[i]
+                try:
+                    blob = SR.download_zip(ck, it["zippath"])
+                    files.append((f"{it['req_id']}_{it['zippath'].split('/')[-1]}", blob))
+                except Exception as e:
+                    errs.append(f"{it['req_id']}: {e}")
+                prog.progress(int((n + 1) / max(1, len(pick)) * 100), text=f"{n + 1}/{len(pick)}")
+            ss.dl_files = files
+            if errs:
+                st.warning("일부 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
+            if files:
+                st.success(f"{len(files)}개 zip 다운로드 완료 → 아래 인식 결과 확인 후 진행하세요.")
+    if ss.get("dl_files"):
+        st.caption(f"받아둔 zip {len(ss.dl_files)}개로 데이터 구성 중… (연도/기준연도는 아래에서)")
+        try:
+            return cached_load_uploads(tuple(ss.dl_files), tuple(mapping_items or []))
+        except ValueError as e:
+            st.error(str(e))
+    return None
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 2 — 데이터 입력
 # ══════════════════════════════════════════════════════════════════════════
@@ -818,11 +875,13 @@ def step1_data():
 
     # 입력 방식  (자료 신청은 ① 단계에서 별도)
     st.caption("SGIS 집계구 자료를 아직 안 받았으면 **① 자료 신청**에서 먼저 신청하세요.")
-    src = st.radio("입력 방식", ["원시 SGIS 자료 (드래그·폴더/zip 경로)", "원시 SGIS CSV 파일 업로드(인구·산업·물리 탭)", "🌐 SGIS API 직접받기(행정동·보조)", "이미 만든 법적 data 시트(xlsx)"],
+    src = st.radio("입력 방식", ["원시 SGIS 자료 (드래그·폴더/zip 경로)", "☁ SGIS 승인 자료 자동 다운로드", "원시 SGIS CSV 파일 업로드(인구·산업·물리 탭)", "🌐 SGIS API 직접받기(행정동·보조)", "이미 만든 법적 data 시트(xlsx)"],
                    horizontal=True, key="src_mode")
 
     raw_new = None
-    if src.startswith("🌐 SGIS"):
+    if src.startswith("☁"):
+        raw_new = _sgis_download_block(mapping_items)
+    elif src.startswith("🌐 SGIS"):
         raw_new = _sgis_input_block(mapping_items)
     elif src.startswith("이미"):
         up = st.file_uploader("법적 data 개별 시트가 든 xlsx (인구/사업체/건축 등 6개 시트)", type=["xlsx"], key="xlsx_up")
