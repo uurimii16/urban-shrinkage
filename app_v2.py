@@ -37,7 +37,7 @@ import sheet_builder
 # ──────────────────────────────────────────────────────────────────────────
 # 페이지 · 스타일
 # ──────────────────────────────────────────────────────────────────────────
-st.set_page_config(page_title="쇠퇴진단 자동화 시스템", page_icon="▦", layout="wide")
+st.set_page_config(page_title="쇠퇴진단 자동화 시스템", page_icon="🧭", layout="wide")
 
 st.markdown(
     """
@@ -356,7 +356,7 @@ def normalize_weights(active_map, wmap, sector_of):
 st.markdown(
     """
     <div class="app-hero">
-      <div class="hero-badge">▦</div>
+      <div class="hero-badge">🧭</div>
       <div>
         <div class="hero-kicker">SGIS DECLINE ANALYZER</div>
         <div class="hero-title">쇠퇴진단 자동화 시스템</div>
