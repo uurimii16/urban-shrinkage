@@ -16,10 +16,9 @@ export / loader / golden_io / custom_indicators / sheet_builder)을 그대로 �
 import io
 import os
 
-import altair as alt
-import openpyxl
 import pandas as pd
 import streamlit as st
+# altair·openpyxl은 결과 화면(step4)에서만 필요 → 지연 import로 초기 로딩 단축.
 
 import code_audit as CA
 import config as C
@@ -90,6 +89,14 @@ st.markdown(
     .pill-ok { color:#1E7D5A; font-weight:800; } .pill-no { color:#B0B7C0; font-weight:700; }
 
     div.stDownloadButton>button { border-radius:9px; font-weight:800; }
+
+    /* Streamlit 기본 UI 숨김(우측상단 메뉴·Deploy·하단 푸터·상태위젯) */
+    #MainMenu { visibility:hidden; }
+    [data-testid="stToolbar"] { visibility:hidden; height:0; }
+    [data-testid="stStatusWidget"] { visibility:hidden; }
+    [data-testid="stDecoration"] { display:none; }
+    header[data-testid="stHeader"] { background:transparent; }
+    footer { visibility:hidden; height:0; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -118,6 +125,7 @@ def tile(label, value, note="", variant="accent", danger_value=False):
 @st.cache_data(show_spinner="원시 데이터 추출 중…")
 def extract_raw(file_bytes: bytes, mapping_items):
     mapping = dict(mapping_items) if mapping_items else None
+    import openpyxl          # 지연 import(파일 로딩 시에만 필요)
     wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
     try:
         miss = golden_io.missing_sheets(wb)
@@ -1497,6 +1505,7 @@ def step4_run():
                              "종합점수": comp["종합"].round(2).values,
                              "등급": pd.to_numeric(pd.Series(grades, index=comp.index), errors="coerce").values})
         rank = rank.sort_values("종합점수", ascending=False).head(15)
+        import altair as alt          # 지연 import(결과 화면에서만 필요)
         chart = (alt.Chart(rank).mark_bar(cornerRadiusEnd=3)
                  .encode(
                      x=alt.X("종합점수:Q", title="종합점수"),
