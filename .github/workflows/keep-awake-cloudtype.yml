@@ -1,7 +1,7 @@
 name: Keep Cloudtype App Awake
 on:
   schedule:
-    - cron: "*/15 * * * *"    # 15분마다(UTC) — '매일 1회 중지' 후 곧바로 재기동
+    - cron: "*/10 * * * *"    # 10분마다(UTC) — 절전 전에 미리 깨워 warm 유지
   workflow_dispatch:           # 수동 실행 버튼
 jobs:
   ping:
@@ -13,8 +13,7 @@ jobs:
           python-version: "3.11"
       - name: Ping Cloudtype app
         env:
-          # repo Settings > Secrets and variables > Actions > Variables 에
-          # CLOUDTYPE_URL 을 만들면 그 값을 사용(예: https://xxx.cloudtype.app).
-          # 없으면 스크립트가 조용히 건너뜀.
-          CLOUDTYPE_URL: ${{ vars.CLOUDTYPE_URL }}
+          # 기본값에 실제 배포 URL을 박아 별도 설정 없이 자동 동작.
+          # (repo Variable CLOUDTYPE_URL 을 만들면 그 값이 우선)
+          CLOUDTYPE_URL: ${{ vars.CLOUDTYPE_URL || 'https://port-0-urban-shrinkage-mr9vlx4ea220fe3d.sel3.cloudtype.app' }}
         run: python .github/keep_awake_cloudtype.py
