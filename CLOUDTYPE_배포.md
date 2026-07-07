@@ -34,18 +34,20 @@
 - Cloudtype 무료 플랜은 미사용 시 절전될 수 있음 → 접속하면 다시 깨어남(수 초).
 - 신청은 각자 **본인 SGIS 로그인 쿠키**가 필요(로그인 후 F12 → Copy as cURL → 붙여넣기).
 
-## 매일 강제중지(404) 자동 복구 — 자동 재배포
+## 매일 강제중지(404) 자동 복구 — API 자동 재배포
 > Cloudtype 무료는 **하루 1회 강제 중지**가 있어, 그 시간대엔 URL이 404가 됩니다.
-> 단순 접속(핑)으로는 안 켜지고 **재배포**해야 다시 켜져요. 이걸 GitHub Actions가 자동으로 합니다.
+> 단순 접속(핑)으로는 안 켜지고 **재배포**해야 다시 켜져요.
+> 이 UI엔 '자동배포 토글'이 없어서, **Cloudtype 공식 API**로 재배포를 자동화합니다.
 
 **설정(딱 1번):**
-1. Cloudtype 대시보드 → 이 앱(프로젝트) 열기.
-2. **설정에서 "자동배포(Auto Deploy)" 토글을 ON** 으로. (GitHub `main`에 push되면 자동 재배포)
-3. 끝. 이후 `.github/workflows/cloudtype-redeploy.yml`이 **한국시간 09·13·17시에 빈 커밋을 push**
-   → Cloudtype 자동 재배포 → 강제중지됐어도 다시 켜짐.
+1. Cloudtype **API 키 발급**: 오른쪽 위 스페이스 아이콘 → 스페이스 설정 → **인증** → **새 API 키 생성** → 복사.
+2. GitHub **Secret 등록**: 리포 → Settings → Secrets and variables → **Actions** → **New repository secret**
+   → Name `CLOUDTYPE_TOKEN`, Secret = 위 API 키 → Add secret.
+3. 끝. `.github/workflows/cloudtype-redeploy.yml`이 **한국시간 09·13·17시에 Cloudtype API로 재배포**
+   → 강제중지됐어도 다시 켜짐. (project=urban-shrinkage, stage=main, workload=app 기준으로 박혀 있음)
 
-**확인:** GitHub 리포 → Actions 탭 → "Cloudtype Auto Redeploy" → **Run workflow**(수동 실행)로
-한 번 돌려보고, 몇 분 뒤 URL이 열리면 성공. (자동배포 토글이 꺼져 있으면 push만 되고 재배포는 안 됨)
+**확인:** GitHub 리포 → Actions 탭 → "Cloudtype Auto Redeploy" → **Run workflow**(수동 실행) →
+초록 체크(✓)로 끝나고 몇 분 뒤 URL이 열리면 성공. 실패(빨강)면 로그 열어 에러문구 확인
+(대개 배포 스펙의 `name/ports/preset` 불일치 → 그 값만 맞추면 됨).
 
-- 참고: 빈 커밋이 기록에 쌓이는 게 싫으면, 대신 Cloudtype **API키 + 공식 배포 액션** 방식으로
-  바꿀 수 있음(토큰 발급 필요). 기능은 동일.
+- 대안: 매일 손이 가는 게 싫고 확실히 하려면 **Cloudtype 유료**(월 몇천원)로 '하루 1회 중지' 자체가 사라짐.

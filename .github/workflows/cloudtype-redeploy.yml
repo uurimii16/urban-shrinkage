@@ -1,21 +1,19 @@
 name: Cloudtype Auto Redeploy (keep alive)
 
-# Cloudtype 무료 플랜은 '하루 1회 강제 중지'가 있고, 이건 단순 HTTP 핑
-# (keep-awake-cloudtype.yml)으로는 다시 켜지지 않는다. 여기서는 하루 몇 번
-# 빈 커밋을 push 해서 Cloudtype의 '자동배포(Auto Deploy)'를 트리거한다.
-# 재배포되면 강제중지된 앱도 새 컨테이너로 다시 켜진다.
+# Cloudtype 무료 플랜은 '하루 1회 강제 중지'가 있어 그 시간대엔 URL이 404가 된다.
+# 단순 HTTP 핑으로는 안 켜지고 '재배포'해야 다시 켜진다.
+# 이 워크플로는 Cloudtype 공식 API(cloudtype-github-actions/deploy)로 앱을 재배포해
+# 강제중지된 앱을 새 컨테이너로 다시 켠다. 자동배포 토글/웹훅이 없어도 동작한다.
 #
-# ★ 사전 준비(딱 1번): Cloudtype 대시보드 → 이 앱 → '자동배포(Auto Deploy)' 토글 ON.
-#    (자동배포가 켜져 있어야 push가 재배포로 이어짐)
+# ★ 사전 준비(딱 1번): GitHub Secret 등록
+#   리포 Settings → Secrets and variables → Actions → New repository secret
+#   Name = CLOUDTYPE_TOKEN, Secret = Cloudtype API 키(스페이스 설정 → 인증 → API키 생성)
 
 on:
   schedule:
     # UTC 기준. 한국시간(KST=UTC+9)으로 09시, 13시, 17시에 재배포 → 낮 근무시간 커버.
     - cron: "0 0,4,8 * * *"
   workflow_dispatch:   # 필요할 때 손으로 즉시 실행하는 버튼
-
-permissions:
-  contents: write      # 빈 커밋 push 권한
 
 concurrency:
   group: cloudtype-redeploy
@@ -27,9 +25,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: 빈 커밋으로 Cloudtype 자동배포 트리거
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit --allow-empty -m "chore: keep Cloudtype awake (auto redeploy)"
-          git push
+      - name: Cloudtype 재배포 (앱 다시 켜기)
+        uses: cloudtype-github-actions/deploy@v1
+        with:
+          token: ${{ secrets.CLOUDTYPE_TOKEN }}
+          project: urban-shrinkage      # 프로젝트 이름
+          stage: main                   # 배포환경(스테이지) 이름
+          yaml: |
+            name: app
+            app: dockerfile
+            options:
+              ports: 8501
+            context:
+              git:
+                url: https://github.com/uurimii16/urban-shrinkage.git
+                ref: refs/heads/main
+              preset: dockerfile
