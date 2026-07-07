@@ -294,6 +294,7 @@ ss.setdefault("clone_notice", None)     # 기본지표 복제 직후 안내(1회
 ss.setdefault("pivot_level", "dong")    # 복합/피벗 집계 단위
 ss.setdefault("cfg", {})                # 계산된 가중치/지표 맵
 ss.setdefault("results", None)          # 최종 진단 결과
+ss.setdefault("nationwide", False)       # 🚀 전국 디폴트 원스톱 전용 화면 여부
 
 # 기본 off 지표(있으면 처음 진입 시 사용 해제). 소형주택비율은 아예 기본지표에서
 # 제거됐으므로(2026-07-06) 현재 비어 있음.
@@ -368,19 +369,20 @@ st.markdown(
 )
 
 STEPS = [("①", "자료 신청"), ("②", "데이터 입력"), ("③", "설정"), ("④", "시트 검토"), ("⑤", "산출")]
-st.markdown(
-    f'<div class="step-track"><div class="step-fill" style="width:{(ss.step-1)/4*100:.0f}%"></div></div>',
-    unsafe_allow_html=True,
-)
 has_data = ss.raw is not None
-nav_cols = st.columns(5)
-for i, (col, (num, name)) in enumerate(zip(nav_cols, STEPS), start=1):
-    done = "✓ " if (i < ss.step) else ""
-    disabled = (i > 2 and not has_data)   # ①자료신청·②데이터입력은 항상 열림, ③~은 데이터 필요
-    if col.button(f"{done}{num} {name}", key=f"nav_{i}",
-                  type="primary" if ss.step == i else "secondary",
-                  use_container_width=True, disabled=disabled):
-        goto(i)
+if not ss.get("nationwide"):     # 전국 원스톱 화면에서는 단계 스테퍼 숨김
+    st.markdown(
+        f'<div class="step-track"><div class="step-fill" style="width:{(ss.step-1)/4*100:.0f}%"></div></div>',
+        unsafe_allow_html=True,
+    )
+    nav_cols = st.columns(5)
+    for i, (col, (num, name)) in enumerate(zip(nav_cols, STEPS), start=1):
+        done = "✓ " if (i < ss.step) else ""
+        disabled = (i > 2 and not has_data)   # ①자료신청·②데이터입력은 항상 열림, ③~은 데이터 필요
+        if col.button(f"{done}{num} {name}", key=f"nav_{i}",
+                      type="primary" if ss.step == i else "secondary",
+                      use_container_width=True, disabled=disabled):
+            goto(i)
 
 # 사이드바: 진행 요약(설정 아님 — 설정은 ②단계 본문)
 with st.sidebar:
@@ -406,7 +408,18 @@ with st.sidebar:
     if st.button("↺ 처음부터 다시", use_container_width=True):
         for k in ("raw", "selected_years", "results", "cfg"):
             ss[k] = None if k != "cfg" else {}
+        ss.nationwide = False
         goto(2)
+    st.markdown("---")
+    if not ss.get("nationwide"):
+        if st.button("🚀 전국 디폴트 원스톱", use_container_width=True, type="primary",
+                     help="전국 시군구를 디폴트로 처음부터 끝까지 자동 구축하는 전용 화면(신청→자동 다운로드→229개 빌드)."):
+            ss.nationwide = True
+            st.rerun()
+    else:
+        if st.button("← 일반 단계별 분석", use_container_width=True):
+            ss.nationwide = False
+            st.rerun()
 
 
 def _merge_raw(primary, secondary):
@@ -766,6 +779,23 @@ def step1_apply():
     _, nav_r = st.columns([3, 1])
     if nav_r.button("다음: 데이터 입력 →", type="primary", use_container_width=True):
         goto(2)
+
+
+def _fetch_all_sigungu(cookie, progress=None):
+    """17개 시도의 전 시군구코드 수집(캐시 재사용). progress(done,total,accum)."""
+    ss.setdefault("sgg_cache", {})
+    cache = ss.sgg_cache
+    allcodes = []
+    for i, (sc, _n) in enumerate(SR.SIDO_LIST):
+        if sc not in cache:
+            try:
+                cache[sc] = SR.fetch_sigungu_list(cookie, sc)
+            except Exception:
+                cache[sc] = []
+        allcodes += [c for c, _ in cache.get(sc, [])]
+        if progress:
+            progress(i + 1, len(SR.SIDO_LIST), len(allcodes))
+    return list(dict.fromkeys(allcodes))
 
 
 def _sgis_download_block(mapping_items):
@@ -1723,8 +1753,129 @@ def step4_run():
                          use_container_width=True, height=420)
 
 
+def nationwide_onestop():
+    """🚀 전국 디폴트 원스톱 — 일반 단계별 분석과 분리된 전용 화면.
+    전국 시군구를 '디폴트' 형태로 처음부터 끝까지 자동 구축:
+      1) 전국 신청  →  (승인 대기: SGIS 이메일)  →  2) 자동 다운로드 → 시군구별 디폴트 엑셀 → zip/폴더 저장."""
+    import batch_build as BB
+    sec("🚀 전국 디폴트 원스톱",
+        "전국 시군구를 **디폴트 지표·가중치** 그대로 집계구별로 받아, 시군구별 엑셀(함수 포함 전체 시트·"
+        "집계구+행정동·최종표)을 한 번에 구축합니다. 일반 단계별 분석과 분리된 전용 화면이에요.")
+    if st.button("← 일반 단계별 분석으로 돌아가기"):
+        ss.nationwide = False
+        st.rerun()
+
+    st.info("흐름: **① 전국 신청** → (SGIS 승인 이메일 대기, 약 10분~) → **② 자동 다운로드 + 229개 빌드**. "
+            "승인 사이의 대기만 사람이 기다리면 되고, 나머지는 버튼 두 번이에요.")
+
+    # ── 0. 쿠키(공통) ──
+    ck_raw = st.text_area("SGIS 쿠키 (F12 → 아무 요청 'Copy as cURL' 통째로 붙여넣기)",
+                          value=ss.get("apply_cookie", ""), height=80, key="nw_cookie",
+                          help="JSESSIONID·accessToken만 자동 추출. 국내 IP에서만 동작(배포 Cloudtype OK).")
+
+    # ── 1. 전국 신청 ──
+    with st.container(border=True):
+        st.markdown("### 1. 전국 시군구 신청")
+        st.caption("전국 모든 시군구의 집계구 자료를 **디폴트 필수항목**으로 한 번에 신청합니다. "
+                   "승인 알림 이메일이 꼭 필요해요.")
+        nw_email = st.text_input("승인 알림 이메일", value=ss.get("apply_email", ""), key="nw_email")
+        if st.button("🏛 전국 신청 실행", key="nw_apply"):
+            ck = SR.extract_cookie(ck_raw or "")
+            checked = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "필수"]
+            items = _apply_build_items(checked)
+            if not ck:
+                st.error("쿠키를 붙여넣으세요.")
+            elif not nw_email.strip():
+                st.error("승인 알림 이메일을 입력하세요 — 비면 SGIS가 신청을 거부해요.")
+            else:
+                ss.apply_cookie, ss.apply_email = ck_raw, nw_email
+                lp = st.progress(0, text="전국 시군구 목록 수집 중…")
+                allcodes = _fetch_all_sigungu(
+                    ck, progress=lambda d, t, a: lp.progress(int(d / t * 100), text=f"{d}/{t} 시도 · 누적 {a}곳"))
+                if not allcodes:
+                    st.error("시군구 목록을 못 불러왔어요 — 쿠키 만료 또는 해외IP 차단.")
+                else:
+                    applicant = _apply_build_applicant("", "", nw_email, "", "복합쇠퇴진단")
+                    st.info(f"전국 **{len(allcodes)}개 시군구** 신청 시작…")
+                    sp = st.progress(0, text=f"0/{len(allcodes)}")
+                    results = _apply_submit_batch(
+                        ck, allcodes, items, applicant, only_first=False,
+                        progress=lambda d, t, sg: sp.progress(int(d / max(1, t) * 100), text=f"{d}/{t} · {sg}"))
+                    _apply_render_results(results)
+                    st.caption("↳ 승인 이메일이 오면 아래 **2번**을 실행하세요.")
+
+    # ── 2. 자동 다운로드 → 디폴트 빌드 → 저장 ──
+    with st.container(border=True):
+        st.markdown("### 2. 승인 자료 자동 다운로드 → 디폴트 시트 빌드 → 저장")
+        st.caption("승인 이메일을 받은 뒤 클릭하면, 승인된 자료를 **전부 자동 다운로드**해서 시군구별 "
+                   "**디폴트 전체 시트(함수 포함)** 엑셀을 만들고 zip으로 묶어요.")
+        oc1, oc2 = st.columns([2, 1])
+        nw_out = oc1.text_input("저장 폴더 경로(선택 · 로컬 실행 시 착착 저장)", value=ss.get("batch_out", ""),
+                                key="nw_out", placeholder=r"예: D:\쇠퇴진단_전국출력")
+        nw_dec = oc2.number_input("소수점 자릿수", 0, 6, 2, 1, key="nw_dec")
+        nw_fmt = st.selectbox("출력 형식", ["디폴트 전체 (함수 포함 · 집계구+행정동 · 최종표 전부)", "최종 4시트만 (값)"],
+                              index=0, key="nw_fmt")
+        nw_final = nw_fmt.startswith("최종")
+        if st.button("🚀 자동 다운로드 → 전국 빌드 실행", type="primary", key="nw_run"):
+            ck = SR.extract_cookie(ck_raw or "")
+            if not ck:
+                st.error("쿠키를 붙여넣으세요.")
+            else:
+                try:
+                    with st.spinner("승인 자료 목록 조회 중…"):
+                        items = SR.fetch_download_list(ck)
+                except Exception as e:
+                    items = None
+                    st.error(f"목록 조회 실패: {e} — 쿠키 만료/해외IP 여부 확인.")
+                if items is not None and not items:
+                    st.warning("다운로드 가능한(승인완료) 자료가 없어요. 승인 이메일을 기다리세요.")
+                elif items:
+                    ss.apply_cookie = ck_raw
+                    dp = st.progress(0, text=f"0/{len(items)} 다운로드")
+                    files, errs = [], []
+                    for n, it in enumerate(items):
+                        try:
+                            blob = SR.download_zip(ck, it["zippath"])
+                            files.append((f"{it['req_id']}_{it['zippath'].split('/')[-1]}", blob))
+                        except Exception as e:
+                            errs.append(f"{it['req_id']}: {e}")
+                        dp.progress(int((n + 1) / len(items) * 100), text=f"{n + 1}/{len(items)} 다운로드")
+                    if errs:
+                        st.warning("일부 다운로드 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
+                    if not files:
+                        st.error("받은 자료가 없어요.")
+                    else:
+                        with st.spinner("데이터 정제 중…"):
+                            raw = cached_load_uploads(tuple(files), tuple())
+                        sgg = BB.list_sigungu(raw)
+                        yp = bucket_years(raw, ["to_in", "in_age", "ho_yr", "ho_ar"])
+                        yb = bucket_years(raw, ["to_fa", "cp_bem"])
+                        yp = max(yp) if yp else 2024
+                        yb = max(yb) if yb else 2023
+                        st.info(f"다운로드 {len(files)}건 · 시군구 **{len(sgg)}곳** · 기준연도 인구{yp}/산업{yb} → 빌드 시작")
+                        bp = st.progress(0, text=f"0/{len(sgg)} 시군구 빌드")
+                        zbytes, summary = BB.build_batch_zip(
+                            raw, name_map=ss.name_map, sido_name_map=dict(getattr(SR, "SIDO_LIST", [])),
+                            decimals=int(nw_dec), final_only=nw_final, formula_mode=(not nw_final),
+                            selected_years=None, year_pop=yp, year_biz=yb, out_dir=(nw_out.strip() or None),
+                            progress=lambda d, t, c: bp.progress(int(d / max(1, t) * 100), text=f"{d}/{t} · {c}"))
+                        ss.nw_zip = zbytes
+                        ss.nw_summary = summary
+                        if nw_out.strip():
+                            st.success(f"📁 저장 완료: `{nw_out.strip()}` 폴더")
+        if ss.get("nw_zip") is not None:
+            ok = int((ss.nw_summary["상태"] == "OK").sum())
+            st.success(f"전국 빌드 완료 — 성공 {ok}/{len(ss.nw_summary)}곳")
+            st.dataframe(ss.nw_summary, use_container_width=True, height=260, hide_index=True)
+            st.download_button("⬇ 전국 배치 zip 다운로드", ss.nw_zip, "쇠퇴진단_전국배치.zip",
+                               "application/zip", type="primary", use_container_width=True)
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # 라우팅
 # ──────────────────────────────────────────────────────────────────────────
 st.markdown("")
-{1: step1_apply, 2: step1_data, 3: step2_settings, 4: step3_review, 5: step4_run}[ss.step]()
+if ss.get("nationwide"):
+    nationwide_onestop()
+else:
+    {1: step1_apply, 2: step1_data, 3: step2_settings, 4: step3_review, 5: step4_run}[ss.step]()
