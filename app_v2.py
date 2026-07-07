@@ -506,15 +506,14 @@ def _sgis_apply_block():
 
     # ── ④ 수집 연도: 부문별로 개별 선택·삭제 ──────────────────────────────
     st.markdown("**④ 수집 연도 (부문별로 개별 선택·삭제)**")
-    st.caption("증감률 지표는 여러 해가 있어야 정확 → 기본은 제공되는 전 연도. 필요 없는 해만 X로 빼세요. "
-               "(성연령·건축연도 등 ‘최신’ 항목은 연도와 무관하게 2024 고정)")
-    ss.setdefault("apply_pop_years", list(SR.YEARS_POP))
-    ss.setdefault("apply_biz_years", list(SR.YEARS_BIZ))
-    yc1, yc2 = st.columns(2)
-    yc1.multiselect("인문사회 · 총인구 연도", SR.YEARS_POP, key="apply_pop_years",
-                    help="인구변화율용. SGIS 제공연도: 2000·05·10·15 + 2016~2024(13개년).")
-    yc2.multiselect("산업경제 · 사업체/종사자 연도", SR.YEARS_BIZ, key="apply_biz_years",
-                    help="총사업체·종사자 증감률용. SGIS 제공연도: 2000~2024 매년(25개년).")
+    st.caption("증감률 지표(총인구·사업체·종사자)는 기본 전 연도. **성연령·건축연도는 기본 최신(2024)** 이고, "
+               "다른 해로 비교하려면(예: 2023) 그 해를 추가하세요. (엔진은 분석 기준연도 1개만 사용)")
+    dom_keys = list(SR.YEAR_DOMAINS.keys())
+    ycols = st.columns(2)
+    for i, dk in enumerate(dom_keys):
+        label, years, default_years, help_txt = SR.YEAR_DOMAINS[dk]
+        ss.setdefault(f"apply_years_{dk}", list(default_years))
+        ycols[i % 2].multiselect(label, years, key=f"apply_years_{dk}", help=help_txt)
 
     st.markdown("**⑤ 받을 항목**")
     st.caption("✅ 아래 **필수 5종 = 복합쇠퇴 전체세트.** 이것만 다 받으면 전체 결과표가 나와요(기본 선택됨).")
@@ -544,17 +543,15 @@ def _sgis_apply_block():
             known |= {c for c, _ in lst}
         unknown = [c for c in sgcodes if known and c not in known]
         # 부문별 선택 연도로 항목 필터(스냅샷=최신 항목은 항상 유지)
-        pop_set = {int(y) for y in ss.get("apply_pop_years", SR.YEARS_POP)}
-        biz_set = {int(y) for y in ss.get("apply_biz_years", SR.YEARS_BIZ)}
+        dom_years = {dk: {int(y) for y in ss.get(f"apply_years_{dk}", SR.YEAR_DOMAINS[dk][2])}
+                     for dk in SR.YEAR_DOMAINS}
         items = []
         for name in checked:
-            dom = SR.YEAR_DOMAIN.get(name)
+            dk = SR.YEAR_DOMAIN.get(name)
             for (d, c, y) in SR.ITEM_CATALOG[name]:
-                if name in SR.SNAPSHOT_ITEMS or dom is None:
+                if name in SR.SNAPSHOT_ITEMS or dk is None:
                     items.append((d, c, y, name))
-                elif dom[0] == "pop" and int(y) in pop_set:
-                    items.append((d, c, y, name))
-                elif dom[0] == "biz" and int(y) in biz_set:
+                elif int(y) in dom_years[dk]:
                     items.append((d, c, y, name))
         if not cookie:
             st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
