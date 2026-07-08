@@ -29,3 +29,8 @@ sgis_probe_download.py
 샘플_*.xlsx
 ~$*.xlsx
 *statistics_code.xlsx
+
+# 정본 양식(데이터 포함)·대용량 산출물 — 공개리포 제외
+복합쇠퇴진단.xlsx
+쇠퇴진단_전국출력*/
+*.pkl

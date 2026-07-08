@@ -61,6 +61,39 @@ def split_raw_by_sigungu(raw: dict) -> dict[str, dict]:
     return out
 
 
+# 특별시·광역시(시도코드): 자치구·군을 통째로 '그 시' 하나로 묶는다.
+GWANGYEOK = {"11", "21", "22", "23", "24", "25", "26"}
+
+
+def city_key(sgg5: str) -> str:
+    """시군구코드(5자리) → '시 단위' 그룹키.
+    - 특별/광역시(11·21·22·23·24·25·26): 자치구 통째로 시도 단위(예 서울 11xxx→'11000').
+    - 그 외(도·세종): 일반구(끝자리≠0)를 부모 시로(끝자리→0). 예 전주 35011·35012→'35010'.
+      단독 시/군(끝자리 0)은 자기 자신 유지. 세종 29010→'29010'."""
+    sd = sgg5[:2]
+    if sd in GWANGYEOK:
+        return sd + "000"
+    return sgg5[:4] + "0"
+
+
+def split_raw_by_city(raw: dict) -> dict[str, dict]:
+    """raw dict → {시 단위 그룹키: raw_subset}. 각 '시' 안 집계구를 다 모아
+    그 시 전체(행정동 집합)에서 표준화하게 한다(광역시 통째·일반구는 시로 합침)."""
+    out: dict[str, dict] = {}
+    for b in BUCKETS:
+        df = raw.get(b)
+        if df is None or not len(df) or "집계구" not in df.columns:
+            continue
+        keys = _sgg5(df["집계구"]).map(city_key)
+        for ck, sub in df.groupby(keys):
+            out.setdefault(ck, {})[b] = sub.copy()
+    # 빈 버킷 채우기
+    for ck in out:
+        for b in BUCKETS:
+            out[ck].setdefault(b, pd.DataFrame(columns=_EMPTY_COLS))
+    return out
+
+
 def _ensure_buckets(raw_sub: dict) -> dict:
     for b in BUCKETS:
         if b not in raw_sub or raw_sub[b] is None:
@@ -98,7 +131,7 @@ def _safe_name(s: str) -> str:
 def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=None,
                     method="jenks", n_classes=10, decimals=2, final_only=False,
                     formula_mode=True, selected_years=None, year_pop=None, year_biz=None,
-                    out_dir=None, progress=None):
+                    out_dir=None, progress=None, group="sigungu"):
     """여러 시군구 raw → (zip_bytes, 요약 DataFrame).
     sigungu: 처리할 시군구코드 리스트(None=raw 안 전체).
     year_pop/year_biz: 기준연도(엔진 전역에 설정). None이면 config 현재값 유지.
@@ -116,7 +149,7 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
         import sheet_builder as _sb
         raw = _sb.filter_raw_years(raw, selected_years)
 
-    parts = split_raw_by_sigungu(raw)
+    parts = split_raw_by_city(raw) if group == "city" else split_raw_by_sigungu(raw)
     codes = [c for c in (sigungu or list(parts.keys())) if c in parts]
     total = len(codes)
     rows = []
