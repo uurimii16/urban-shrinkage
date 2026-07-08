@@ -568,17 +568,21 @@ def _sgis_apply_block():
                 sc2.error(f"시군구 불러오기 실패: {e} — 쿠키가 만료됐으면 SGIS 재로그인 후 새 쿠키를 붙여넣으세요.")
     sgg_opts = cache.get(sido_code, [])
     sgg_map = dict(sgg_opts)
-    sel = sc2.multiselect("시군구 (여러 개 가능)", [c for c, _ in sgg_opts],
+    all_codes = [c for c, _ in sgg_opts]
+    sel = sc2.multiselect("시군구 (여러 개 가능)", all_codes,
                           format_func=lambda c: f"{sgg_map.get(c, c)} · {c}", key="apply_sgg_pick")
     if sgg_opts:
-        ba1, ba2 = sc2.columns(2)
-        if ba1.button(f"＋ 이 시도 전체 선택 ({len(sgg_opts)}곳)", use_container_width=True,
-                      help="전국 배치 신청용 — 이 시도의 모든 시군구를 한 번에 선택합니다."):
-            ss.apply_sgg_pick = [c for c, _ in sgg_opts]
-            st.rerun()
-        if ba2.button("－ 선택 비우기", use_container_width=True):
+        # 위젯 key를 직접 바꾸면 StreamlitAPIException → on_click 콜백에서 세팅(위젯 생성 전 실행돼 허용됨).
+        def _pick_all(codes=all_codes):
+            ss.apply_sgg_pick = list(codes)
+
+        def _pick_none():
             ss.apply_sgg_pick = []
-            st.rerun()
+
+        ba1, ba2 = sc2.columns(2)
+        ba1.button(f"＋ 이 시도 전체 선택 ({len(sgg_opts)}곳)", use_container_width=True,
+                   help="이 시도의 모든 시군구를 한 번에 선택합니다.", on_click=_pick_all)
+        ba2.button("－ 선택 비우기", use_container_width=True, on_click=_pick_none)
     picked_sgg = [(c, sgg_map.get(c, c)) for c in sel]
     if picked_sgg:
         st.caption("선택: " + ", ".join(f"{n}({c})" for c, n in picked_sgg))
