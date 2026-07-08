@@ -529,6 +529,8 @@ def _sgis_apply_block():
                    "JSESSIONID·accessToken만 자동 추출해요. 세션 만료되면 다시 복사.")
         cookie_raw = st.text_area("쿠키 또는 cURL 통째", value=ss.get("apply_cookie", ""), height=90, key="in_apply_cookie",
                                   label_visibility="collapsed")
+        if cookie_raw:
+            ss.apply_cookie = cookie_raw   # 매 렌더 저장 → 스텝 이동해도 쿠키 유지(①②에서 공유)
         if cookie_raw and SR.extract_cookie(cookie_raw):
             st.caption("✅ 쿠키 인식됨")
         elif cookie_raw:
@@ -809,6 +811,8 @@ def _sgis_download_block(mapping_items):
     ck_raw = st.text_area("SGIS 쿠키 (F12 → 아무 요청 'Copy as cURL' 통째로 붙여넣기)",
                           value=ss.get("apply_cookie", ""), height=80, key="dl_cookie_raw",
                           help="JSESSIONID·accessToken만 자동 추출해요. 신청 화면에 넣은 쿠키와 같은 걸 써도 됩니다.")
+    if ck_raw:
+        ss.apply_cookie = ck_raw   # 매 렌더 저장 → 스텝 이동해도 쿠키 유지(①과 공유)
     if st.button("📋 승인된 자료 목록 불러오기"):
         ck = SR.extract_cookie(ck_raw or "")
         if not ck:
@@ -859,9 +863,35 @@ def _sgis_download_block(mapping_items):
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 2 — 데이터 입력
 # ══════════════════════════════════════════════════════════════════════════
+def _merge_raw(a, b):
+    """기존 raw(a)에 새 raw(b)를 버킷별로 합침(중복 자동 제거). '추가' 모드용."""
+    out = {}
+    for k in set(a) | set(b):
+        frames = [d for d in (a.get(k), b.get(k)) if d is not None and len(d)]
+        if not frames:
+            out[k] = a.get(k) if a.get(k) is not None else b.get(k)
+            continue
+        m = pd.concat(frames, ignore_index=True)
+        subset = [c for c in ("연도", "집계구", "CODE") if c in m.columns]
+        if subset:
+            m = m.drop_duplicates(subset=subset, keep="last")
+        out[k] = m.reset_index(drop=True)
+    return out
+
+
 def step1_data():
     sec("② 데이터 입력", "원시 SGIS 자료를 넣으면 내부 항목코드 기준으로 자동 분류합니다. "
         "필요하면 보조 파일(매핑·참조코드)을 먼저 올리세요.")
+
+    if ss.raw is not None:
+        try:
+            _nsgg = len(BB.list_sigungu(ss.raw))
+        except Exception:
+            _nsgg = 0
+        _rows = sum(len(v) for v in ss.raw.values() if v is not None)
+        st.success(f"✅ 데이터가 이미 로드돼 있어요 — 시군구 **{_nsgg}곳** · 총 **{_rows:,}행**. "
+                   "**다시 안 올려도 됩니다.** (화면의 업로드 칸이 비어 보여도 데이터는 유지돼요.) "
+                   "아래는 **교체·추가**할 때만 쓰세요.")
 
     # 보조 파일
     mapping_items, name_map, code_label_map = None, None, {}
@@ -1003,12 +1033,21 @@ def step1_data():
         else:
             st.info("① 파일을 드래그하거나 ② 폴더/zip 경로를 입력하세요.")
 
-    # 기존 세션 데이터 재사용
-    raw = raw_new if raw_new is not None else ss.raw
+    # 기존 세션 데이터 재사용 / 교체 · 추가
+    if raw_new is not None and ss.raw is not None:
+        _mode = st.radio("새로 올린 데이터 처리", ["기존에 추가(병합)", "기존을 교체"],
+                         horizontal=True, key="merge_mode",
+                         help="추가=기존 시군구에 새 데이터를 합침(중복 자동 제거). 교체=기존을 버리고 새 것만.")
+        if _mode.startswith("기존에 추가"):
+            raw = _merge_raw(ss.raw, raw_new)
+            st.success("기존 데이터에 **추가(병합)** 했어요. (중복 자동 제거)")
+        else:
+            raw = raw_new
+            st.info("기존 데이터를 **교체** 했어요.")
+    else:
+        raw = raw_new if raw_new is not None else ss.raw
     if raw is None:
         return
-    if raw_new is None and ss.raw is not None:
-        st.success("이미 불러온 데이터를 사용 중입니다. (새 파일을 올리면 교체됩니다)")
 
     # 연도 선택 + 상태 요약
     st.markdown("---")
