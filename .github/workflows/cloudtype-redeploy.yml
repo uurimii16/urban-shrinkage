@@ -9,7 +9,7 @@ name: Cloudtype Keep-Alive & Auto-Heal
 
 on:
   schedule:
-    - cron: "*/10 * * * *"   # 10분마다
+    - cron: "*/5 * * * *"    # 5분마다 (무료 절전 주기가 짧아 더 자주 데움; Public 리포라 Actions 무제한)
   workflow_dispatch:          # 손으로 즉시 실행
 
 concurrency:

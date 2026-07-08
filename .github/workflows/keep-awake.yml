@@ -17,5 +17,6 @@ jobs:
         env:
           # repo Settings > Secrets and variables > Actions > Variables 에
           # STREAMLIT_URL 을 만들면 그 값을 쓰고, 없으면 아래 기본값 사용.
-          STREAMLIT_URL: ${{ vars.STREAMLIT_URL || 'https://urban-shrinkage.streamlit.app/' }}
+          # ★ 실제 배포처는 Cloudtype(국내). 예전 Streamlit Cloud 주소(죽음)를 찌르던 버그 수정.
+          STREAMLIT_URL: ${{ vars.STREAMLIT_URL || 'https://port-0-urban-shrinkage-mr9vlx4ea220fe3d.sel3.cloudtype.app/' }}
         run: python .github/keep_awake.py
