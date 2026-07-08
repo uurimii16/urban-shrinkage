@@ -70,6 +70,7 @@ ITEMS = [
 
 URL = "https://sgis.mods.go.kr/view/pss/saveRequestData"
 OPT_URL = "https://sgis.mods.go.kr/view/pss/requestOptionData"
+REQ_PAGE_URL = "https://sgis.mods.go.kr/view/pss/requestData"   # 세션 프라이밍용(신청 전 GET 필수)
 
 # ── SGIS 실측 제공연도 ──
 #   인구·주택(인구주택총조사): 2000·2005·2010·2015 + 2016~2024 매년 = 13개년
@@ -182,9 +183,29 @@ def make_cart(items, sigungu_codes, only_first=False):
     return cart[:1] if only_first else cart
 
 
+def prime_session(cookie):
+    """★ 신청 등록의 필수 선행단계 ★
+    saveRequestData 는 같은 세션이 먼저 requestData 페이지를 GET 해야만 신청을
+    '신청내역에 등록'한다. 프라이밍 없이 POST 하면 200·응답 1/2 가 와도 **등록되지
+    않는다**(=조용한 실패). 실측 확정(2026-07-08, 국내IP): 프라이밍 없이는 미등록,
+    동일 요청도 GET requestData 직후엔 등록됨(JSESSIONID+accessToken 2쿠키로 충분).
+    반환: 성공 여부(bool). 실패해도 신청은 시도한다."""
+    try:
+        req = urllib.request.Request(REQ_PAGE_URL, headers={
+            "Cookie": cookie, "User-Agent": "Mozilla/5.0",
+            "Referer": REQ_PAGE_URL})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            r.read()
+        return True
+    except Exception:
+        return False
+
+
 def submit_cart(cookie, cart, applicant=None):
     """cart → saveRequestData 제출 → (status, response_text).
-    applicant: 신청자 정보 override dict(앱 화면 입력값). None이면 APPLICANT 기본값."""
+    applicant: 신청자 정보 override dict(앱 화면 입력값). None이면 APPLICANT 기본값.
+    ※ 제출 전 prime_session()으로 세션을 준비해야 신청이 실제로 등록된다."""
+    prime_session(cookie)                     # ★ 필수: 없으면 신청이 등록 안 됨
     boundary = "WebKitFormBoundary" + uuid.uuid4().hex[:16]
     body = build_body(cart, boundary, applicant=applicant)
     return submit(cookie, body, boundary)
@@ -447,6 +468,7 @@ def main():
         print("\n[미리보기 모드] 실제 신청 안 함. 진짜 신청하려면 끝에 --submit 붙이세요.")
         return
     print("\n[신청 전송 중…]")
+    prime_session(cookie)                     # ★ 필수: 없으면 신청이 등록 안 됨
     status, resp = submit(cookie, body, boundary)
     print("HTTP", status)
     print("응답:", resp[:800])
