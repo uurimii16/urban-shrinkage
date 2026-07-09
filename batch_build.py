@@ -142,7 +142,8 @@ def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=Non
     if recipes:
         scores = CI.combine_scores(scores, RE.build_recipe_scores(recipes, raw_sub, "jgu", idx))
     values = TE.values_from_scores(scores, ids)       # base+커스텀+계산식 지표값
-    wb = TE.build_composite_workbook(indicators=indicators, values=values, admin_path=admin_path)
+    wb = TE.build_full_workbook(raw_sub, values=values, indicators=indicators,
+                                admin_path=admin_path)   # 원본 9시트 전부
     n_dong = len({str(c)[:8] for c in idx})
     stats = {"n_dong": n_dong, "n_jgu": len(idx), "n_decl": 0}
     return wb, stats
@@ -194,7 +195,7 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                         parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
                         decimals=decimals, final_only=final_only, formula_mode=formula_mode,
                         selected_years=selected_years)
-                wbuf = io.BytesIO(); wb.save(wbuf); wbuf.seek(0)
+                wbuf = io.BytesIO(); TE.save_wb(wb, wbuf); wbuf.seek(0)
                 sname = (sido_name_map or {}).get(sgg[:2], "")
                 fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
                 zf.writestr(fname, wbuf.getvalue())
@@ -257,17 +258,24 @@ def stream_sigungu_templates(files, *, indicators, custom_df=None, recipes=None,
     import sheet_builder as SB
 
     tmp = tmp_dir or tempfile.mkdtemp(prefix="sgg_stream_")
-    if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+    if out_dir:   # 로컬 저장 폴더는 '있으면 좋은' 부가기능 → 실패해도 zip 산출은 계속
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            out_dir = None
 
     # ── 1단계: 스풀 (파일 하나씩 → 시군구별 pkl append) ──
     sgg_parts: dict[str, list[str]] = {}
+    nfiles = 0
     for name, data in _iter_named_bytes(files):
         if L._is_corrupt(name):
             continue
         df = L._read_csv_bytes(data)
         if df is None or len(df) == 0:
             continue
+        nfiles += 1
+        if progress:
+            progress(nfiles, None, name, "spool")   # 정제 진행(총 개수는 미정 → None)
         df["집계구"] = df["집계구"].astype(str).str.strip()
         df = df[df["집계구"].str.len().isin([8, 14])]      # 롤업행(2·5자리) 제거
         if len(df) == 0:
@@ -302,13 +310,16 @@ def stream_sigungu_templates(files, *, indicators, custom_df=None, recipes=None,
                                                custom_df=custom_df, recipes=recipes,
                                                admin_path=admin_path)
                 del raw_sub
-                wbuf = io.BytesIO(); wb.save(wbuf); wbuf.seek(0)
+                wbuf = io.BytesIO(); TE.save_wb(wb, wbuf); wbuf.seek(0)
                 sname = (sido_name_map or {}).get(sgg[:2], "")
                 fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
                 zf.writestr(fname, wbuf.getvalue())
                 if out_dir:
-                    with open(os.path.join(out_dir, fname), "wb") as fh:
-                        fh.write(wbuf.getvalue())
+                    try:
+                        with open(os.path.join(out_dir, fname), "wb") as fh:
+                            fh.write(wbuf.getvalue())
+                    except Exception:
+                        pass
                 rows.append({"시군구코드": sgg, "시도": sname, "파일": fname,
                              "집계구수": stats.get("n_jgu", 0), "상태": "OK"})
             except Exception as e:   # 한 시군구 실패가 전체를 막지 않게 격리
@@ -321,14 +332,17 @@ def stream_sigungu_templates(files, *, indicators, custom_df=None, recipes=None,
                     except Exception:
                         pass
             if progress:
-                progress(i + 1, total, sgg)
+                progress(i + 1, total, sgg, "build")
         summary = pd.DataFrame(rows)
         try:
             csv_bytes = summary.to_csv(index=False).encode("utf-8-sig")
             zf.writestr("_요약.csv", csv_bytes)
             if out_dir:
-                with open(os.path.join(out_dir, "_요약.csv"), "wb") as fh:
-                    fh.write(csv_bytes)
+                try:
+                    with open(os.path.join(out_dir, "_요약.csv"), "wb") as fh:
+                        fh.write(csv_bytes)
+                except Exception:
+                    pass
         except Exception:
             pass
     shutil.rmtree(tmp, ignore_errors=True)

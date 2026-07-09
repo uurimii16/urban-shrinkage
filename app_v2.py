@@ -912,18 +912,36 @@ def _sgis_download_block(mapping_items):
             st.caption("받은 파일을 **시군구별로 하나씩** 처리해 정본 양식(계산방법+복합종합) 엑셀을 각각 만들어 "
                        "zip으로 묶어요. 전체를 메모리에 안 올려 **큰 지역도 안 터집니다.** "
                        "가중치는 ③설정값(설정했으면)·없으면 정본 기본값.")
-            so = st.text_input("저장 폴더(선택 · 로컬 실행 시 각 파일 저장)", value=ss.get("stream_out", ""),
-                               key="in_stream_out", placeholder=r"예: D:\쇠퇴진단_스트리밍")
+            so = st.text_input("저장 폴더(비워두세요 · 로컬에서 직접 실행할 때만 사용)", value=ss.get("stream_out", ""),
+                               key="in_stream_out", placeholder="비워두면 zip 다운로드만 (권장)",
+                               help="웹에서는 비워두세요. 결과는 아래 ‘zip 다운로드’로 받습니다. "
+                                    "이 칸은 내 PC에서 코드를 직접 돌릴 때 각 파일을 폴더에 저장하는 용도예요.")
             if st.button(f"⚙ 시군구별 스트리밍 산출 시작 ({n_files}개 파일 · {total_mb:.0f}MB)",
                          type="primary", use_container_width=True, key="stream_run"):
                 import batch_build as BB
+                import time as _time
                 inds = TE.indicators_from_cfg(ss.get("cfg") or {})
                 am = ss.get("active_map") or {}
                 active_recipes = [rc for rc in (ss.get("recipes") or []) if am.get(rc["name"], True)]
                 prog = st.progress(0, text="시작…")
+                _tm = {"t0": _time.time(), "build0": None}
 
-                def _scb(done, total, sgg):
-                    prog.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sgg}")
+                def _fmt(sec):   # 초 → "1분 20초" / "45초"
+                    sec = int(sec)
+                    return f"{sec // 60}분 {sec % 60}초" if sec >= 60 else f"{sec}초"
+
+                def _scb(done, total, sgg, phase="build"):
+                    el = _time.time() - _tm["t0"]
+                    if phase == "spool":   # 1단계: 원시 파일 정제(총 개수 미정)
+                        prog.progress(5, text=f"1/2단계 · 원시 파일 정제 중 {done}개째… (경과 {_fmt(el)})")
+                    else:                  # 2단계: 시군구 하나씩 산출(경과+예상 남은시간)
+                        if _tm["build0"] is None:
+                            _tm["build0"] = _time.time()
+                        bel = _time.time() - _tm["build0"]
+                        eta = (bel / done) * (total - done) if done else 0
+                        pct = int(done / max(1, total) * 100)
+                        prog.progress(pct, text=f"2/2단계 · 시군구 {done}/{total} ({sgg}) · "
+                                                f"경과 {_fmt(el)} · 남은시간 약 {_fmt(eta)}")
 
                 try:
                     with st.spinner("시군구별 스트리밍 산출 중… (하나씩 처리)"):
@@ -935,13 +953,16 @@ def _sgis_download_block(mapping_items):
                             out_dir=(so.strip() or None), progress=_scb)
                     ss.stream_out = so
                     ss.stream_zip, ss.stream_summary = zb, summ
-                    prog.progress(100, text="완료")
+                    ss.stream_secs = _time.time() - _tm["t0"]
+                    prog.progress(100, text=f"완료 · 총 {_fmt(ss.stream_secs)}")
                 except Exception as e:
                     st.error(f"스트리밍 산출 실패: {e}")
             if ss.get("stream_zip") is not None:
                 sm = ss.stream_summary
                 ok = int((sm["상태"] == "OK").sum()) if sm is not None else 0
-                st.success(f"완료 — 성공 {ok} / {len(sm)}곳")
+                _secs = ss.get("stream_secs")
+                _tt = f" · 소요 {int(_secs)//60}분 {int(_secs)%60}초" if _secs else ""
+                st.success(f"완료 — 성공 {ok} / {len(sm)}곳{_tt}")
                 st.dataframe(sm, use_container_width=True, height=220, hide_index=True)
                 st.download_button("⬇ 시군구별 정본 zip 다운로드", ss.stream_zip,
                                    "쇠퇴진단_시군구별_정본.zip", "application/zip",
@@ -1872,11 +1893,16 @@ def step4_run():
         if st.button("정본 양식 생성 (가중치 반영)", use_container_width=True, key="build_template"):
             try:
                 inds = TE.indicators_from_cfg(ss.cfg)
-                with st.spinner("정본 양식 생성 중…"):
+                with st.spinner("정본 양식 생성 중… (원본 9시트 · 원시데이터 많으면 시간 걸림)"):
                     # 산출 때 저장한 집계구 지표값(기본+커스텀+계산식) 재활용 → 재계산 없음
-                    twb = TE.build_composite_workbook(indicators=inds,
-                                                      values=res.get("template_values"))
-                    tbuf = io.BytesIO(); twb.save(tbuf); tbuf.seek(0)
+                    # raw가 있으면 9시트 전부, 없으면 2시트(계산방법+복합종합)로 폴백
+                    if ss.get("raw"):
+                        twb = TE.build_full_workbook(ss.raw, values=res.get("template_values"),
+                                                     indicators=inds)
+                    else:
+                        twb = TE.build_composite_workbook(indicators=inds,
+                                                          values=res.get("template_values"))
+                    tbuf = io.BytesIO(); TE.save_wb(twb, tbuf); tbuf.seek(0)
                 ss.results["template_xlsx"] = tbuf.getvalue()
                 st.success(f"정본 양식 생성 완료 — 지표 {len(inds)}개 · "
                            f"최종가중치 합계 {sum(i[4] for i in inds) * 100:.2f}%")
