@@ -33,6 +33,7 @@ import recipe_engine as RE
 import sgis_collect as SC
 import sgis_request as SR
 import sheet_builder
+import template_export as TE
 
 # ──────────────────────────────────────────────────────────────────────────
 # 페이지 · 스타일
@@ -1132,59 +1133,11 @@ def step1_data():
         st.caption("· 선택 분류 미포함(없어도 됨): " + ", ".join(missing_opt)
                    + " — 소형주택비율 등 ‘복제’ 지표를 쓸 때만 필요해요.")
 
-    # ── 전국 시군구 배치 빌드(디폴트값 · 시군구별 독립 산출) ──────────────────
-    with st.expander("🌏 전국 시군구 배치 빌드 (디폴트값 · 시군구별 독립 산출)", expanded=False):
-        import batch_build as BB
-        sgg_codes = BB.list_sigungu(raw)
-        st.caption("업로드한 데이터 안의 **모든 시군구를 각각 독립적으로**(그 시군구 행정동·집계구 안에서 표준화) "
-                   "**기본 지표·가중치(디폴트)** 로 진단해 시군구별 xlsx로 만들고, 하나의 zip으로 묶어요. "
-                   "**연도만** 위에서 고른 값을 씁니다. (※ 먼저 SGIS에서 그 시군구들 데이터를 받아 업로드해야 해요)")
-        if not sgg_codes:
-            st.info("시군구를 인식하지 못했어요. 집계구(14자리)나 5자리 시군구코드가 있는 데이터인지 확인하세요.")
-        else:
-            head = ", ".join(sgg_codes[:20]) + (" …" if len(sgg_codes) > 20 else "")
-            st.markdown(f"인식된 시군구: **{len(sgg_codes)}곳** — {head}")
-            bc1, bc2 = st.columns([2, 1])
-            batch_fmt = bc1.selectbox(
-                "출력 형식", ["디폴트 전체 (함수 포함 · 집계구+행정동 · 최종표 전부)", "최종 4시트만 (값)"],
-                index=0, key="batch_fmt",
-                help="디폴트 전체 = 계산방법·DATA·피벗·역산수식까지 포함한 전체 시트. 파일이 큼.")
-            batch_decimals = bc2.number_input("소수점 자릿수", 0, 6, 2, 1, key="batch_decimals")
-            batch_final_only = batch_fmt.startswith("최종")
-            batch_formula = not batch_final_only     # 디폴트 전체일 때 함수(수식) 포함
-            batch_out = st.text_input("저장 폴더 경로(선택 · 로컬 실행 시 각 파일을 여기 착착 저장)",
-                                      value=ss.get("batch_out", ""), key="in_batch_out",
-                                      placeholder=r"예: D:\쇠퇴진단_전국출력",
-                                      help="비우면 zip 다운로드만. 배포 웹에선 서버에 저장돼 의미 없으니 로컬 실행 때만 쓰세요.")
-            st.caption("⏳ 시군구 수가 많으면 오래 걸려요(탭을 닫으면 중단). **229곳 같은 대량은 아래 안내의 "
-                       "`batch_run.py`(터미널 백그라운드 일괄처리)** 를 권장해요.")
-            if st.button(f"⚙ 전국 배치 빌드 실행 ({len(sgg_codes)}곳)", type="secondary",
-                         use_container_width=True):
-                ss.batch_out = batch_out
-                sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
-                prog = st.progress(0, text=f"0/{len(sgg_codes)} 시군구")
-
-                def _cb(done, total, sgg):
-                    prog.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sgg}")
-
-                with st.spinner("시군구별 진단·엑셀 생성 중… (시군구 수에 따라 오래 걸릴 수 있어요)"):
-                    zbytes, summary = BB.build_batch_zip(
-                        raw, name_map=ss.name_map, sido_name_map=sido_name_map,
-                        method="jenks", n_classes=10, decimals=int(batch_decimals),
-                        final_only=batch_final_only, formula_mode=batch_formula,
-                        selected_years=selected_years, out_dir=(batch_out.strip() or None),
-                        year_pop=int(pop_ref), year_biz=int(biz_ref), progress=_cb)
-                ss.batch_zip = zbytes
-                ss.batch_summary = summary
-                prog.progress(100, text="완료")
-                if batch_out.strip():
-                    st.info(f"📁 저장 완료: `{batch_out.strip()}` 폴더에 시군구별 파일 저장됨.")
-            if ss.get("batch_zip") is not None:
-                ok = int((ss.batch_summary["상태"] == "OK").sum()) if ss.get("batch_summary") is not None else 0
-                st.success(f"배치 완료 — 성공 {ok} / {len(ss.batch_summary)}곳")
-                st.dataframe(ss.batch_summary, use_container_width=True, height=240, hide_index=True)
-                st.download_button("⬇ 전국 배치 zip 다운로드", ss.batch_zip, "쇠퇴진단_전국배치.zip",
-                                   "application/zip", type="primary", use_container_width=True)
+    # (구) '전국 시군구 배치 빌드' expander는 ⑤ 산출의 '선택 시군구 개별 산출'로 이동·개조함
+    #  — ③설정 가중치를 쓰려면 설정 뒤(⑤)에 있어야 하므로 위치를 옮김.
+    st.caption("💡 여러 시군구를 골라 **③설정 가중치 그대로** 개별 정본 양식으로 뽑으려면 "
+               "**⑤ 진단 산출 화면의 ‘선택 시군구 개별 산출’** 을 쓰세요. "
+               "(전국 전체를 디폴트로 자동 신청·빌드하려면 🚀 전국 디폴트 원스톱)")
 
     st.markdown("")
     nav_l, nav_r = st.columns([3, 1])
@@ -1651,6 +1604,59 @@ def step4_run():
                                     "종합점수 높은순", "종합점수 낮은순"].index(ss.get("sort_mode", "기본(데이터순)")),
                              key="sort_mode",
                              help="최종표(엑셀)·순위표의 행 정렬 순서. 기본은 데이터순(골든과 동일).")
+
+    # ── 선택 시군구 개별 산출 (③설정 가중치 그대로 · 시군구별 정본 양식 · 따로 저장) ──
+    with st.expander("🏙 선택 시군구 개별 산출 (내 설정 적용 · 시군구별 정본 양식)", expanded=False):
+        import batch_build as BB
+        st.caption("업로드한 데이터에서 시군구를 **골라**, ③설정의 **가중치·지표 구성 그대로** "
+                   "시군구마다 **정본 양식(계산방법+복합종합) 엑셀을 따로** 만듭니다. "
+                   "각 시군구는 그 안에서 독립 표준화되고, 커스텀·계산식 지표값도 반영돼요.")
+        sgg_all = BB.list_sigungu(raw_selected)
+        if not sgg_all:
+            st.info("데이터에서 시군구를 인식하지 못했어요(집계구 14자리 또는 시군구 5자리 필요).")
+        else:
+            sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
+            pick = st.multiselect(
+                "처리할 시군구 선택", sgg_all,
+                format_func=lambda c: f"{c} {sido_name_map.get(c[:2], '')}", key="pick_sigungu")
+            pick_out = st.text_input(
+                "저장 폴더 경로(선택 · 로컬 실행 시 각 파일을 여기 저장)",
+                value=ss.get("pick_out", ""), key="in_pick_out",
+                placeholder=r"예: D:\쇠퇴진단_선택출력", help="비우면 zip 다운로드만.")
+            if st.button(f"⚙ 선택 시군구 개별 산출 ({len(pick)}곳)", type="secondary",
+                         use_container_width=True, disabled=not pick):
+                try:
+                    inds = TE.indicators_from_cfg(ss.cfg)
+                    active_recipes = [rc for rc in ss.recipes
+                                      if ss.active_map.get(rc["name"], True) and rc["name"] in indicator_ids]
+                    prog = st.progress(0, text=f"0/{len(pick)}")
+
+                    def _cb(done, total, sgg):
+                        prog.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sgg}")
+
+                    with st.spinner("시군구별 정본 양식 생성 중…"):
+                        zbytes, summary = BB.build_batch_zip(
+                            raw_selected, sigungu=pick, sido_name_map=sido_name_map,
+                            year_pop=int(ss.get("pop_ref_year", C.YEAR_POP_LATEST)),
+                            year_biz=int(ss.get("biz_ref_year", C.YEAR_BIZ_LATEST)),
+                            template_mode=True, indicators=inds,
+                            custom_df=ss.custom_df, recipes=active_recipes,
+                            admin_path=TE.DEFAULT_ADMIN_PATH,
+                            out_dir=(pick_out.strip() or None), progress=_cb)
+                    ss.pick_out = pick_out
+                    ss.pick_zip, ss.pick_summary = zbytes, summary
+                    prog.progress(100, text="완료")
+                    if pick_out.strip():
+                        st.info(f"📁 저장 완료: `{pick_out.strip()}` 폴더에 시군구별 정본 양식 저장됨.")
+                except Exception as e:
+                    st.error(f"선택 시군구 산출 실패: {e}")
+            if ss.get("pick_zip") is not None:
+                ok = int((ss.pick_summary["상태"] == "OK").sum()) if ss.get("pick_summary") is not None else 0
+                st.success(f"완료 — 성공 {ok} / {len(ss.pick_summary)}곳")
+                st.dataframe(ss.pick_summary, use_container_width=True, height=200, hide_index=True)
+                st.download_button("⬇ 선택 시군구 zip 다운로드", ss.pick_zip, "쇠퇴진단_선택시군구.zip",
+                                   "application/zip", use_container_width=True, key="dl_pick")
+
     run_clicked = st.button("▶ 최종 법적 + 복합 진단 산출", type="primary", use_container_width=True)
 
     if run_clicked:
@@ -1717,11 +1723,14 @@ def step4_run():
         prog.progress(100, text="100% · 완료")
 
         n_decl = int((legal_dong["쇠퇴지역"] == "o").sum())
+        # 정본 양식용: 집계구별 지표값(기본+커스텀+계산식 전체)을 jgu_scores에서 뽑아 저장
+        template_values = TE.values_from_scores(jgu_scores, indicator_ids)
         ss.results = {
             "dong_comp": dong_comp, "dong_grades": dong_grades, "dong_stats": dong[3],
             "legal_dong": legal_dong, "n_dong": len(dong[0]), "n_jgu": len(jgu[0]),
             "n_decl": n_decl, "xlsx": buf.getvalue(), "formula": download_mode.startswith("수식"),
             "final_only": ss.get("final_only", False),
+            "template_values": template_values,
         }
 
     # 결과 표시
@@ -1754,6 +1763,35 @@ def step4_run():
         dl_label, res["xlsx"], dl_name,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary", use_container_width=True)
+
+    # ── 정본 양식(차장님 형태 · ③설정 가중치 그대로 반영) ──
+    with st.container(border=True):
+        st.markdown("**📐 정본 양식 (계산방법 + 복합쇠퇴진단 종합 · 집계구 단위)**")
+        st.caption("③ 설정의 **방향부호·최종가중치**가 첫 시트(계산방법 E24~)에 그대로 써지고, "
+                   "복합쇠퇴진단 종합 시트가 그 셀을 **엑셀 함수로 참조**합니다. "
+                   "설정을 바꿔 다시 산출하면 값이 함수로 자동 재계산돼요.")
+        if st.button("정본 양식 생성 (가중치 반영)", use_container_width=True, key="build_template"):
+            try:
+                inds = TE.indicators_from_cfg(ss.cfg)
+                with st.spinner("정본 양식 생성 중…"):
+                    # 산출 때 저장한 집계구 지표값(기본+커스텀+계산식) 재활용 → 재계산 없음
+                    twb = TE.build_composite_workbook(indicators=inds,
+                                                      values=res.get("template_values"))
+                    tbuf = io.BytesIO(); twb.save(tbuf); tbuf.seek(0)
+                ss.results["template_xlsx"] = tbuf.getvalue()
+                st.success(f"정본 양식 생성 완료 — 지표 {len(inds)}개 · "
+                           f"최종가중치 합계 {sum(i[4] for i in inds) * 100:.2f}%")
+            except FileNotFoundError:
+                st.error(f"행정구역코드 표를 찾을 수 없습니다: {TE.DEFAULT_ADMIN_PATH}\n"
+                         "행정구역코드_전국.xlsx 위치를 확인하세요.")
+            except Exception as e:
+                st.error(f"정본 양식 생성 실패: {e}")
+        if res.get("template_xlsx"):
+            st.download_button(
+                "⬇ 정본 양식 xlsx 다운로드 (계산방법 + 복합종합)",
+                res["template_xlsx"], "복합쇠퇴진단_정본양식.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True, key="dl_template")
 
     st.markdown("")
     chart_col, table_col = st.columns([2, 3], gap="large")

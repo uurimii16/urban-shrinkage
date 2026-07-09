@@ -124,6 +124,30 @@ def build_one_workbook(raw_sub: dict, *, name_map=None, method="jenks", n_classe
     return wb, stats
 
 
+def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=None,
+                       admin_path=None):
+    """한 시군구 raw_subset → 정본 양식(계산방법 + 복합쇠퇴진단 종합) Workbook.
+    ③설정 가중치·지표목록(indicators=template_export.indicators_from_cfg(cfg))을 그대로 쓰고,
+    base+커스텀+계산식 집계구 지표값을 채운다. 각 시군구는 그 시군구 집계구 집합 안에서
+    독립 표준화(정본 종합의 Z/T가 그 파일 자기 행들로 함수 계산)."""
+    import template_export as TE
+    import custom_indicators as CI
+    import recipe_engine as RE
+    raw_sub = _ensure_buckets(raw_sub)
+    ids = [i[0] for i in indicators]
+    scores = E.run(raw_sub, level="jgu")[0]          # 집계구 base scores((지표,'값'/'Z'/'T'))
+    idx = scores.index
+    if custom_df is not None and len(custom_df):
+        scores = CI.combine_scores(scores, CI.build_scores(custom_df, idx, "jgu"))
+    if recipes:
+        scores = CI.combine_scores(scores, RE.build_recipe_scores(recipes, raw_sub, "jgu", idx))
+    values = TE.values_from_scores(scores, ids)       # base+커스텀+계산식 지표값
+    wb = TE.build_composite_workbook(indicators=indicators, values=values, admin_path=admin_path)
+    n_dong = len({str(c)[:8] for c in idx})
+    stats = {"n_dong": n_dong, "n_jgu": len(idx), "n_decl": 0}
+    return wb, stats
+
+
 def _safe_name(s: str) -> str:
     return re.sub(r'[\\/:*?"<>|]+', "_", str(s)).strip() or "sigungu"
 
@@ -131,12 +155,16 @@ def _safe_name(s: str) -> str:
 def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=None,
                     method="jenks", n_classes=10, decimals=2, final_only=False,
                     formula_mode=True, selected_years=None, year_pop=None, year_biz=None,
-                    out_dir=None, progress=None, group="sigungu"):
+                    out_dir=None, progress=None, group="sigungu",
+                    template_mode=False, indicators=None, custom_df=None, recipes=None,
+                    admin_path=None):
     """여러 시군구 raw → (zip_bytes, 요약 DataFrame).
     sigungu: 처리할 시군구코드 리스트(None=raw 안 전체).
     year_pop/year_biz: 기준연도(엔진 전역에 설정). None이면 config 현재값 유지.
     out_dir: 지정하면 각 시군구 xlsx를 그 폴더에 '착착' 저장(로컬 실행용). zip은 항상 반환.
-    progress(done, total, sgg): 진행 콜백(선택)."""
+    progress(done, total, sgg): 진행 콜백(선택).
+    template_mode=True: 각 시군구를 ③설정 가중치(indicators)로 '정본 양식'(계산방법+복합종합)으로
+      산출(build_one_template). custom_df/recipes로 커스텀·계산식 지표값도 반영. False면 기존 구양식."""
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
     if year_pop is not None:
@@ -157,10 +185,15 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         for i, sgg in enumerate(codes):
             try:
-                wb, stats = build_one_workbook(
-                    parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
-                    decimals=decimals, final_only=final_only, formula_mode=formula_mode,
-                    selected_years=selected_years)
+                if template_mode:
+                    wb, stats = build_one_template(
+                        parts[sgg], indicators=indicators, custom_df=custom_df,
+                        recipes=recipes, admin_path=admin_path)
+                else:
+                    wb, stats = build_one_workbook(
+                        parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
+                        decimals=decimals, final_only=final_only, formula_mode=formula_mode,
+                        selected_years=selected_years)
                 wbuf = io.BytesIO(); wb.save(wbuf); wbuf.seek(0)
                 sname = (sido_name_map or {}).get(sgg[:2], "")
                 fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")

@@ -4,6 +4,7 @@
 엔진 계산은 decline_engine·legal_engine 그대로 재사용, 출력 양식만 이 모듈이 담당.
 지금은 계산방법 + 복합쇠퇴진단 종합 을 우선 구현(검증용). 법적·원시시트는 후속.
 """
+import os
 import openpyxl
 from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, Alignment, Border, Side
@@ -29,10 +30,40 @@ TEMPLATE_INDICATORS = [
 ]
 SECTORS = ['인문사회', '산업경제', '물리환경']
 CALC_SHEET = '계산방법(수식·알고리즘)'
+# 지표 id → 정본 양식 헤더/부문/방향/가중치. 앱 cfg에 없는 값은 여기서 폴백.
+_TEMPLATE_HDR = {iid: hdr for iid, hdr, *_ in TEMPLATE_INDICATORS}
+_TEMPLATE_SEC = {iid: sec for iid, _h, sec, _s, _w in TEMPLATE_INDICATORS}
+_TEMPLATE_SIGN = {iid: sign for iid, _h, _sec, sign, _w in TEMPLATE_INDICATORS}
+_TEMPLATE_W = {iid: w for iid, _h, _sec, _s, w in TEMPLATE_INDICATORS}
+# 전국 행정동명표(load_admin_names 기본 경로) — 이 파일 기준 상대경로.
+DEFAULT_ADMIN_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  '행정구역코드', '행정구역코드_전국.xlsx')
 _THIN = Side(style='thin', color='B0B0B0')
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
 _HDR_FONT = Font(bold=True, size=9)
 _CENTER = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+
+def indicators_from_cfg(cfg):
+    """app_v2의 ss.cfg → 정본 양식용 indicators 리스트.
+    반환: [(id, 헤더, 부문, 방향부호, 최종가중치), ...]  (순서 = cfg['indicator_ids']).
+    · 방향부호·최종가중치·부문 = ③설정에서 사용자가 정한 값(sign_map/final_weight/sector_of).
+    · 헤더 = 정본 양식 헤더 우선, 없으면(커스텀 지표) cfg의 label_map.
+    cfg가 비어 있으면 정본 기본 12지표를 그대로 돌려준다."""
+    ids = list(cfg.get('indicator_ids') or [i[0] for i in TEMPLATE_INDICATORS])
+    sign_map = cfg.get('sign_map', {})
+    weight = cfg.get('final_weight', {})
+    sector_of = cfg.get('sector_of', {})
+    label_map = cfg.get('label_map', {})
+    out = []
+    for iid in ids:
+        hdr = _TEMPLATE_HDR.get(iid) or label_map.get(iid, iid)
+        sec = sector_of.get(iid) or _TEMPLATE_SEC.get(iid) or SECTORS[0]
+        # cfg에 값이 있으면(0 포함) 그대로, 아예 없으면 정본 기본값으로 폴백
+        sign = int(sign_map[iid]) if iid in sign_map else _TEMPLATE_SIGN.get(iid, -10)
+        w = float(weight[iid]) if iid in weight else _TEMPLATE_W.get(iid, 0.0)
+        out.append((iid, hdr, sec, sign, w))
+    return out
 
 
 def load_admin_names(path):
@@ -52,13 +83,27 @@ def load_admin_names(path):
     return dong, sgg
 
 
-def compute_values(raw_sub, key='집계구'):
-    """집계구(또는 행정동)별 12지표 값 DataFrame(템플릿 순서)."""
+def compute_values(raw_sub, ids=None, key='집계구'):
+    """집계구(또는 행정동)별 지표 값 DataFrame. ids 순서·구성으로 정렬.
+    ids=None이면 정본 기본 12지표. 엔진이 못 만드는 지표(커스텀 등)는 NaN 열로 남고,
+    종합시트의 Z/T 수식이 빈칸을 0으로 처리하므로 구조는 그대로 유지된다."""
+    if ids is None:
+        ids = [i[0] for i in TEMPLATE_INDICATORS]
     df = E.derive_indicators(raw_sub, key=key)            # 11지표(config)
-    if '소형주택비율' not in df.columns:                    # 소형주택 되살림
-        df = df.copy()
+    if '소형주택비율' in ids and '소형주택비율' not in df.columns and 'ho_ar' in raw_sub:
+        df = df.copy()                                     # 소형주택 되살림(요청 시)
         df['소형주택비율'] = E.derive_small_housing_ratio(raw_sub['ho_ar'], key)
-    return df.reindex(columns=[i[0] for i in TEMPLATE_INDICATORS])
+    return df.reindex(columns=list(ids))
+
+
+def values_from_scores(scores, ids):
+    """앱이 이미 산출한 scores(멀티인덱스 (지표,'값'/'Z'/'T')) → 정본 지표값 DataFrame.
+    기본+커스텀+계산식 지표 모두 (지표,'값') 열을 갖고 있으므로 그대로 뽑아 쓴다.
+    scores에 없는 지표는 NaN(빈칸)으로 남고 종합시트 함수가 0으로 처리."""
+    cols = {}
+    for iid in ids:
+        cols[iid] = scores[(iid, '값')] if (iid, '값') in scores.columns else np.nan
+    return pd.DataFrame(cols, index=scores.index)
 
 
 # ── 계산방법 시트 ──────────────────────────────────────────────
@@ -198,15 +243,21 @@ def write_composite(ws, codes, values, dong_names, indicators=TEMPLATE_INDICATOR
     return N
 
 
-def build_composite_workbook(raw_sub, admin_path, indicators=TEMPLATE_INDICATORS):
-    """검증용: 계산방법 + 복합쇠퇴진단 종합 만 든 wb (집계구 단위)."""
-    dong_names, _ = load_admin_names(admin_path)
-    vals = compute_values(raw_sub, key='집계구')
+def build_composite_workbook(raw_sub=None, admin_path=None, indicators=TEMPLATE_INDICATORS,
+                             values=None):
+    """계산방법 + 복합쇠퇴진단 종합 2시트 wb (집계구 단위).
+    indicators = TEMPLATE_INDICATORS(기본) 또는 indicators_from_cfg(cfg)로 만든
+    ③설정 반영 목록. 값·계산방법·종합 셋 다 같은 목록으로 산출해 E열 참조가 일치한다.
+    · values 주어지면(앱 scores에서 뽑은 base+custom+recipe 전체 지표값) 그걸 사용.
+    · 없으면 raw_sub에서 기본지표만 계산(standalone·검증용)."""
+    dong_names, _ = load_admin_names(admin_path or DEFAULT_ADMIN_PATH)
+    ids = [i[0] for i in indicators]
+    vals = values.reindex(columns=ids) if values is not None else compute_values(raw_sub, ids, key='집계구')
     vals = vals[vals.index.astype(str).str.len() == 14]      # 집계구(14자리)만
     codes = sorted(vals.index.astype(str))
     vals = vals.loc[codes]
     wb = openpyxl.Workbook()
-    write_calc_method(wb.active)
+    write_calc_method(wb.active, indicators)
     wb.active.title = CALC_SHEET
     ws2 = wb.create_sheet('2 복합쇠퇴진단 종합')
     write_composite(ws2, codes, vals, dong_names, indicators)
