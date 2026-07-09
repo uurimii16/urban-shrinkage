@@ -222,3 +222,115 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
             pass
     buf.seek(0)
     return buf.getvalue(), summary
+
+
+def _iter_named_bytes(files):
+    """[(name, bytes), ...] → (내부파일명, bytes) 제너레이터. .zip은 자동 해제해 내부 csv/txt를 펼침."""
+    for name, data in files or []:
+        if str(name).lower().endswith(".zip"):
+            try:
+                zf = zipfile.ZipFile(io.BytesIO(data))
+            except Exception:
+                continue
+            for zi in zf.namelist():
+                if zi.endswith("/") or not zi.lower().endswith((".csv", ".txt")):
+                    continue
+                try:
+                    yield (os.path.basename(zi) or zi), zf.read(zi)
+                except Exception:
+                    continue
+        else:
+            yield name, data
+
+
+def stream_sigungu_templates(files, *, indicators, custom_df=None, recipes=None,
+                             admin_path=None, sido_name_map=None, selected_years=None,
+                             sigungu=None, out_dir=None, progress=None, tmp_dir=None):
+    """다운로드 파일들을 '시군구별로 하나씩' 처리해 정본 양식(계산방법+복합종합) xlsx를 만들어 zip.
+    전체 raw를 한 번에 메모리에 안 올려 큰 지역(서울 25구 등)도 안전.
+      1단계(스풀): 파일 하나씩 읽어 → 시군구코드(집계구 앞5)로 쪼개 → 디스크에 저장 → 파일 버림.
+      2단계(처리): 시군구 하나씩만 불러와 → 정본 산출 → zip 추가 → 임시파일 삭제 → 진행바.
+    files: [(name, bytes), ...] (zip 자동 해제). 반환: (zip_bytes, 요약 DataFrame)."""
+    import shutil
+    import tempfile
+    import loader as L
+    import sheet_builder as SB
+
+    tmp = tmp_dir or tempfile.mkdtemp(prefix="sgg_stream_")
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
+    # ── 1단계: 스풀 (파일 하나씩 → 시군구별 pkl append) ──
+    sgg_parts: dict[str, list[str]] = {}
+    for name, data in _iter_named_bytes(files):
+        if L._is_corrupt(name):
+            continue
+        df = L._read_csv_bytes(data)
+        if df is None or len(df) == 0:
+            continue
+        df["집계구"] = df["집계구"].astype(str).str.strip()
+        df = df[df["집계구"].str.len().isin([8, 14])]      # 롤업행(2·5자리) 제거
+        if len(df) == 0:
+            continue
+        df["_sgg"] = df["집계구"].str[:5]
+        for sgg, sub in df.groupby("_sgg"):
+            if sigungu and sgg not in sigungu:
+                continue
+            d = os.path.join(tmp, sgg)
+            os.makedirs(d, exist_ok=True)
+            p = os.path.join(d, f"{len(sgg_parts.get(sgg, []))}.pkl")
+            sub.drop(columns="_sgg").to_pickle(p)
+            sgg_parts.setdefault(sgg, []).append(p)
+        del df
+
+    codes = sorted(sgg_parts.keys())
+    if sigungu:
+        codes = [c for c in codes if c in sigungu]
+
+    # ── 2단계: 시군구 하나씩 정본 산출 ──
+    rows, total = [], len(codes)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, sgg in enumerate(codes):
+            try:
+                frames = [pd.read_pickle(p) for p in sgg_parts[sgg]]
+                raw_sub = L._build_raw_from_rows(frames)
+                del frames
+                if selected_years:
+                    raw_sub = SB.filter_raw_years(raw_sub, selected_years)
+                wb, stats = build_one_template(raw_sub, indicators=indicators,
+                                               custom_df=custom_df, recipes=recipes,
+                                               admin_path=admin_path)
+                del raw_sub
+                wbuf = io.BytesIO(); wb.save(wbuf); wbuf.seek(0)
+                sname = (sido_name_map or {}).get(sgg[:2], "")
+                fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
+                zf.writestr(fname, wbuf.getvalue())
+                if out_dir:
+                    with open(os.path.join(out_dir, fname), "wb") as fh:
+                        fh.write(wbuf.getvalue())
+                rows.append({"시군구코드": sgg, "시도": sname, "파일": fname,
+                             "집계구수": stats.get("n_jgu", 0), "상태": "OK"})
+            except Exception as e:   # 한 시군구 실패가 전체를 막지 않게 격리
+                rows.append({"시군구코드": sgg, "시도": (sido_name_map or {}).get(sgg[:2], ""),
+                             "파일": "", "집계구수": 0, "상태": f"실패: {e}"})
+            finally:
+                for p in sgg_parts.get(sgg, []):
+                    try:
+                        os.remove(p)
+                    except Exception:
+                        pass
+            if progress:
+                progress(i + 1, total, sgg)
+        summary = pd.DataFrame(rows)
+        try:
+            csv_bytes = summary.to_csv(index=False).encode("utf-8-sig")
+            zf.writestr("_요약.csv", csv_bytes)
+            if out_dir:
+                with open(os.path.join(out_dir, "_요약.csv"), "wb") as fh:
+                    fh.write(csv_bytes)
+        except Exception:
+            pass
+    shutil.rmtree(tmp, ignore_errors=True)
+    buf.seek(0)
+    return buf.getvalue(), summary

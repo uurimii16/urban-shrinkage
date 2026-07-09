@@ -904,11 +904,58 @@ def _sgis_download_block(mapping_items):
             if files:
                 st.success(f"{len(files)}개 zip 다운로드 완료 → 아래 인식 결과 확인 후 진행하세요.")
     if ss.get("dl_files"):
-        st.caption(f"받아둔 zip {len(ss.dl_files)}개로 데이터 구성 중… (연도/기준연도는 아래에서)")
-        try:
-            return cached_load_uploads(tuple(ss.dl_files), tuple(mapping_items or []))
-        except ValueError as e:
-            st.error(str(e))
+        n_files = len(ss.dl_files)
+        total_mb = sum(len(b) for _, b in ss.dl_files) / 1e6
+        big = (total_mb > 40) or (n_files > 8)
+        # ── 대용량: 시군구별 스트리밍 산출 (전체 로드 없이 → 서울 25구 같은 큰 지역도 안 터짐) ──
+        with st.expander("🏙 대용량: 시군구별 스트리밍 산출 (전체 로드 없이 · 큰 지역 OK)", expanded=big):
+            st.caption("받은 파일을 **시군구별로 하나씩** 처리해 정본 양식(계산방법+복합종합) 엑셀을 각각 만들어 "
+                       "zip으로 묶어요. 전체를 메모리에 안 올려 **큰 지역도 안 터집니다.** "
+                       "가중치는 ③설정값(설정했으면)·없으면 정본 기본값.")
+            so = st.text_input("저장 폴더(선택 · 로컬 실행 시 각 파일 저장)", value=ss.get("stream_out", ""),
+                               key="in_stream_out", placeholder=r"예: D:\쇠퇴진단_스트리밍")
+            if st.button(f"⚙ 시군구별 스트리밍 산출 시작 ({n_files}개 파일 · {total_mb:.0f}MB)",
+                         type="primary", use_container_width=True, key="stream_run"):
+                import batch_build as BB
+                inds = TE.indicators_from_cfg(ss.get("cfg") or {})
+                am = ss.get("active_map") or {}
+                active_recipes = [rc for rc in (ss.get("recipes") or []) if am.get(rc["name"], True)]
+                prog = st.progress(0, text="시작…")
+
+                def _scb(done, total, sgg):
+                    prog.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sgg}")
+
+                try:
+                    with st.spinner("시군구별 스트리밍 산출 중… (하나씩 처리)"):
+                        zb, summ = BB.stream_sigungu_templates(
+                            list(ss.dl_files), indicators=inds, custom_df=ss.get("custom_df"),
+                            recipes=active_recipes, admin_path=TE.DEFAULT_ADMIN_PATH,
+                            sido_name_map=dict(getattr(SR, "SIDO_LIST", [])),
+                            selected_years=ss.get("selected_years"),
+                            out_dir=(so.strip() or None), progress=_scb)
+                    ss.stream_out = so
+                    ss.stream_zip, ss.stream_summary = zb, summ
+                    prog.progress(100, text="완료")
+                except Exception as e:
+                    st.error(f"스트리밍 산출 실패: {e}")
+            if ss.get("stream_zip") is not None:
+                sm = ss.stream_summary
+                ok = int((sm["상태"] == "OK").sum()) if sm is not None else 0
+                st.success(f"완료 — 성공 {ok} / {len(sm)}곳")
+                st.dataframe(sm, use_container_width=True, height=220, hide_index=True)
+                st.download_button("⬇ 시군구별 정본 zip 다운로드", ss.stream_zip,
+                                   "쇠퇴진단_시군구별_정본.zip", "application/zip",
+                                   use_container_width=True, key="dl_stream")
+        # ── 전체 정제(작은 지역용) — 큰 데이터면 자동 로드를 건너뛰어 터짐 방지 ──
+        do_full = st.checkbox("받은 데이터 전체를 이 앱으로 정제·분석 (작은 지역만 권장)",
+                              value=not big, key="dl_full_load",
+                              help="서울 전체처럼 크면 꺼두세요 — 위 ‘스트리밍 산출’로 시군구별 결과만 받는 게 안전합니다.")
+        if do_full:
+            st.caption(f"받아둔 zip {len(ss.dl_files)}개로 데이터 구성 중… (연도/기준연도는 아래에서)")
+            try:
+                return cached_load_uploads(tuple(ss.dl_files), tuple(mapping_items or []))
+            except ValueError as e:
+                st.error(str(e))
     return None
 
 
