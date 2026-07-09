@@ -282,7 +282,20 @@ ss.setdefault("raw", None)              # 전체 원시 dict
 ss.setdefault("selected_years", None)
 ss.setdefault("pop_ref_year", None)
 ss.setdefault("biz_ref_year", None)
-ss.setdefault("name_map", dong_names.default_name_map())   # 전주 34동 기본 내장
+@st.cache_data(show_spinner=False)
+def _national_name_map():
+    """전국 행정동코드(8자리)→행정동명 (행정구역코드_전국.xlsx에서 1회 캐시).
+    파일이 없으면 전주 34동 기본 내장으로 폴백. → 어느 지역이든 이름 자동."""
+    try:
+        import template_export as _TE
+        dong, _ = _TE.load_admin_names(_TE.DEFAULT_ADMIN_PATH)
+        if dong:
+            return {**dong_names.default_name_map(), **dong}
+    except Exception:
+        pass
+    return dong_names.default_name_map()
+
+ss.setdefault("name_map", _national_name_map())   # 전국 행정동 이름 자동(전국표)·전주 폴백
 ss.setdefault("code_label_map", {})
 ss.setdefault("sector_df", None)
 ss.setdefault("internal_wmap", {})
@@ -851,23 +864,40 @@ def _sgis_download_block(mapping_items):
                          "(해외서버에서 실행하면 SGIS가 차단해요 → 국내 PC/Cloudtype에서 실행)")
     items = ss.get("dl_items")
     if items:
-        st.dataframe(pd.DataFrame(items)[["req_id", "label", "date", "expire"]],
-                     use_container_width=True, height=240, hide_index=True)
-        labels = [f"{it['req_id']} · {it['label'][:34]} (만료 {it['expire']})" for it in items]
-        pick = st.multiselect("받을 자료 선택(기본 전체)", list(range(len(items))),
-                              default=list(range(len(items))), format_func=lambda i: labels[i], key="dl_pick")
-        if st.button(f"⬇ 선택 {len(pick)}건 다운로드 → 데이터로 불러오기", type="primary"):
+        items = sorted(items, key=lambda it: str(it.get("date", "")), reverse=True)  # 최근 신청 먼저
+        if "dl_done" not in ss:
+            ss.dl_done = set()          # 이 세션에서 이미 받은 req_id
+        done = ss.dl_done
+        df = pd.DataFrame(items)[["req_id", "label", "date", "expire"]].copy()
+        df.insert(0, "받음", ["✅" if it["req_id"] in done else "" for it in items])
+        st.dataframe(df, use_container_width=True, height=240, hide_index=True)
+        st.caption("※ 목록 = **승인완료(만료 전) 자료 전부**예요. 이미 받은 것도 만료 전까진 다시 보입니다 "
+                   "(‘받음 ✅’ = 이번 세션에서 받은 표시). SGIS는 만료 전까진 재다운로드가 돼요.")
+        # ── 신청일·개수로 골라 받기 ──
+        dates = sorted({it.get("date", "") for it in items if it.get("date")}, reverse=True)
+        f1, f2, f3 = st.columns([2, 1, 1])
+        pick_dates = f1.multiselect("신청일로 거르기 (기본 전체)", dates, default=dates, key="dl_dates")
+        recent_n = f2.number_input("최근 N건만 (0=전체)", 0, len(items), 0, 1, key="dl_recent_n",
+                                   help="신청 늦은(최근) 순서부터 N건.")
+        hide_done = f3.checkbox("이미 받은 건 빼기", value=False, key="dl_hide_done")
+        sel = [it for it in items if it.get("date", "") in pick_dates]
+        if hide_done:
+            sel = [it for it in sel if it["req_id"] not in done]
+        if recent_n:
+            sel = sel[:int(recent_n)]                       # 이미 최근순 정렬됨
+        st.caption(f"➡ 받을 자료: **{len(sel)}건** / 전체 {len(items)}건")
+        if st.button(f"⬇ 선택 {len(sel)}건 다운로드 → 데이터로 불러오기", type="primary", disabled=not sel):
             ck = SR.extract_cookie(ck_raw or "")
             files, errs = [], []
             prog = st.progress(0, text="다운로드 중…")
-            for n, i in enumerate(pick):
-                it = items[i]
+            for n, it in enumerate(sel):
                 try:
                     blob = SR.download_zip(ck, it["zippath"])
                     files.append((f"{it['req_id']}_{it['zippath'].split('/')[-1]}", blob))
+                    done.add(it["req_id"])
                 except Exception as e:
                     errs.append(f"{it['req_id']}: {e}")
-                prog.progress(int((n + 1) / max(1, len(pick)) * 100), text=f"{n + 1}/{len(pick)}")
+                prog.progress(int((n + 1) / max(1, len(sel)) * 100), text=f"{n + 1}/{len(sel)}")
             ss.dl_files = files
             if errs:
                 st.warning("일부 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
@@ -927,8 +957,9 @@ def step1_data():
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
             map_file = st.file_uploader("매핑 (열: 집계구코드, 행정동코드, 행정동명)", type=["xlsx", "csv"],
-                                        help="코드는 집계구 앞 8자리로 자동. 이름은 전주 34동이 기본 내장됨 — 다른 지자체만 이 파일로 이름 추가.", key="map_file")
-            st.caption("✅ 전주(완산·덕진 34개 행정동) **이름은 기본 내장** — 파일 없이 자동으로 붙어요. 다른 지역만 업로드하면 됩니다.")
+                                        help="선택 사항. 전국 행정동 이름은 자동으로 붙어요 — 이 파일은 이름을 덮어쓰거나 보완할 때만.", key="map_file")
+            st.caption("✅ **전국 행정동 이름 자동** (행정구역코드 전국표 내장) — 어느 지역이든 파일 없이 이름이 붙어요. "
+                       "이름이 비거나 다르게 나올 때만 이 파일로 보완하세요.")
         with cb:
             st.markdown("**참조 코드표**")
             st.caption("속성명 인식이 애매할 때만. 코드/명칭 열 자동 추정.")
@@ -1167,7 +1198,7 @@ def step1_data():
         ss.selected_years = selected_years
         ss.pop_ref_year, ss.biz_ref_year = int(pop_ref), int(biz_ref)
         # 업로드 매핑이 있으면 내장표(전주)에 덮어써 합침 — 없으면 내장표 유지
-        ss.name_map = {**dong_names.default_name_map(), **name_map} if name_map is not None else ss.name_map
+        ss.name_map = {**_national_name_map(), **name_map} if name_map is not None else ss.name_map
         ss.code_label_map = code_label_map or ss.code_label_map
         goto(3)
 
