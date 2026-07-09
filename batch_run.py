@@ -69,7 +69,7 @@ def main():
 
     zbytes, summary = BB.build_batch_zip(
         raw, sigungu=only, name_map=dong_names.default_name_map(),
-        sido_name_map=None, decimals=args.decimals,
+        sido_name_map=dong_names.default_sido_map() or None, decimals=args.decimals,
         final_only=args.final_only, formula_mode=(not args.values),
         selected_years=sel_years, year_pop=args.year_pop, year_biz=args.year_biz,
         out_dir=args.output, progress=_cb)
