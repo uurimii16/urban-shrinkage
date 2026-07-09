@@ -523,19 +523,38 @@ def _sgis_apply_block():
         st.markdown(SR.NEED_EXPLAIN)
 
     with st.expander("① SGIS 로그인 쿠키 붙여넣기", expanded=not ss.get("apply_cookie")):
-        st.markdown("**쿠키 = 로그인 출입증.** 특별한 ‘발급 과정’을 녹화할 필요 **없어요** — "
-                    "로그인 상태의 **아무 요청이나 하나**면 같은 쿠키가 들어있습니다.")
-        st.caption("① SGIS(sgis.mods.go.kr) **로그인** → ② **F12** → **Network** 탭 → ③ 그냥 **페이지 새로고침**(F5) → "
-                   "④ 목록에 뜬 요청 **아무거나 하나 우클릭 → Copy as cURL** → ⑤ 아래에 붙여넣기(통째로 OK). "
-                   "JSESSIONID·accessToken만 자동 추출해요. 세션 만료되면 다시 복사.")
-        cookie_raw = st.text_area("쿠키 또는 cURL 통째", value=ss.get("apply_cookie", ""), height=90, key="in_apply_cookie",
-                                  label_visibility="collapsed")
-        if cookie_raw:
-            ss.apply_cookie = cookie_raw   # 매 렌더 저장 → 스텝 이동해도 쿠키 유지(①②에서 공유)
-        if cookie_raw and SR.extract_cookie(cookie_raw):
-            st.caption("✅ 쿠키 인식됨")
-        elif cookie_raw:
-            st.caption("⚠️ JSESSIONID·accessToken을 못 찾았어요. 로그인 상태에서 다시 복사해보세요.")
+        st.markdown("**신청에 필요한 값은 딱 2개예요 — `JSESSIONID` 와 `accessToken`.** "
+                    "‘아무 요청이나 복사’는 이 둘이 빠질 때가 있어 실패해요. 아래 **확실한 방법(A)** 을 권장합니다.")
+        st.caption("**A. 확실한 방법 (권장)** — SGIS(sgis.mods.go.kr) **로그인** → **F12** → "
+                   "**Application**(크롬)/**저장소**(Firefox) 탭 → 왼쪽 **Cookies → https://sgis.mods.go.kr** 클릭 → "
+                   "목록에서 **JSESSIONID**·**accessToken** 두 줄의 **Value**를 복사해 아래 두 칸에 붙여넣기. "
+                   "(이 목록엔 항상 둘 다 있어 실패가 없어요.)")
+        mk1, mk2 = st.columns(2)
+        js = mk1.text_input("JSESSIONID 값", value=ss.get("ck_js", ""), key="in_ck_js",
+                            placeholder="Cookies 목록 JSESSIONID 행의 Value")
+        at = mk2.text_input("accessToken 값", value=ss.get("ck_at", ""), key="in_ck_at",
+                            placeholder="Cookies 목록 accessToken 행의 Value")
+        st.caption("**B. 빠른 방법** — Network 탭 → 아무 요청 우클릭 → **Copy as cURL** → 아래에 통째로 붙여넣기.")
+        cookie_raw = st.text_area("cURL 통째 (B 방법)", value=ss.get("apply_curl_raw", ""), height=70,
+                                  key="in_apply_cookie", label_visibility="collapsed")
+        # A(두 칸) 우선, 없으면 B(cURL) → 최종 쿠키를 ss.apply_cookie(다운스트림 공용)에 저장
+        if js.strip() and at.strip():
+            ss.ck_js, ss.ck_at = js.strip(), at.strip()
+            ss.apply_cookie = f"JSESSIONID={js.strip()}; accessToken={at.strip()}"
+        elif cookie_raw.strip():
+            ss.apply_curl_raw = cookie_raw
+            ss.apply_cookie = cookie_raw
+        # 실시간 개별 확인 — 어느 값이 잡혔는지 딱 보여줌
+        found = SR.found_cookies(ss.get("apply_cookie", ""))
+        s1, s2 = st.columns(2)
+        s1.markdown("✅ **JSESSIONID** 확인됨" if found["JSESSIONID"] else "⬜ JSESSIONID 대기")
+        s2.markdown("✅ **accessToken** 확인됨" if found["accessToken"] else "⬜ accessToken 대기")
+        if ss.get("apply_cookie") and all(found.values()):
+            st.success("준비 완료 — 아래에서 지역·항목 고르고 신청하세요.", icon="✅")
+        elif ss.get("apply_cookie"):
+            miss = ", ".join(k for k, v in found.items() if not v)
+            st.warning(f"아직 **{miss}** 이(가) 안 잡혔어요. A 방법(Cookies 패널)에서 그 값을 붙여넣으면 확실해요.")
+        cookie_raw = ss.get("apply_cookie", "")   # 이후 코드가 쓰는 변수 = 최종 확정 쿠키(A 또는 B)
 
     with st.expander("② 신청자 정보 (SGIS 신청서에 들어감 — 본인 정보 입력)", expanded=not ss.get("apply_userid")):
         st.caption("SGIS 자료신청서에 채워지는 값이에요. 코드엔 저장 안 되고 이 세션에서만 사용합니다.")
@@ -809,9 +828,10 @@ def _sgis_download_block(mapping_items):
     ss.setdefault("dl_files", None)
     st.caption("신청 → **승인(약 10분, 이메일)** 후, SGIS 로그인 쿠키로 **승인된 자료 zip을 자동으로 받아 바로 불러옵니다.** "
                "여러 건을 한 번에 받아 전국 배치 빌드로 이어갈 수 있어요. (국내 IP에서만 동작)")
-    ck_raw = st.text_area("SGIS 쿠키 (F12 → 아무 요청 'Copy as cURL' 통째로 붙여넣기)",
+    ck_raw = st.text_area("SGIS 쿠키 (JSESSIONID·accessToken · cURL 통째도 OK)",
                           value=ss.get("apply_cookie", ""), height=80, key="dl_cookie_raw",
-                          help="JSESSIONID·accessToken만 자동 추출해요. 신청 화면에 넣은 쿠키와 같은 걸 써도 됩니다.")
+                          help="① 신청 화면에 넣은 쿠키와 같은 걸 써도 됩니다. 확실한 방법: F12 → "
+                               "Application/저장소 → Cookies → sgis.mods.go.kr 에서 JSESSIONID·accessToken Value 복사.")
     if ck_raw:
         ss.apply_cookie = ck_raw   # 매 렌더 저장 → 스텝 이동해도 쿠키 유지(①과 공유)
     if st.button("📋 승인된 자료 목록 불러오기"):
@@ -1847,9 +1867,10 @@ def nationwide_onestop():
             "승인 사이의 대기만 사람이 기다리면 되고, 나머지는 버튼 두 번이에요.")
 
     # ── 0. 쿠키(공통) ──
-    ck_raw = st.text_area("SGIS 쿠키 (F12 → 아무 요청 'Copy as cURL' 통째로 붙여넣기)",
+    ck_raw = st.text_area("SGIS 쿠키 (JSESSIONID·accessToken · cURL 통째도 OK)",
                           value=ss.get("apply_cookie", ""), height=80, key="nw_cookie",
-                          help="JSESSIONID·accessToken만 자동 추출. 국내 IP에서만 동작(배포 Cloudtype OK).")
+                          help="확실한 방법: F12 → Application/저장소 → Cookies → sgis.mods.go.kr 에서 "
+                               "JSESSIONID·accessToken Value 복사. 국내 IP에서만 동작(배포 Cloudtype OK).")
 
     # ── 1. 전국 신청 ──
     with st.container(border=True):
