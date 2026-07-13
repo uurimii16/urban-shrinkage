@@ -26,6 +26,7 @@ import config as C
 import decline_engine as E
 import legal_engine as LG
 import export
+import template_export as TE   # save_wb(캐시 주입 저장) — build_batch_zip·stream_sigungu_templates에서 사용
 
 BUCKETS = ["to_in", "in_age", "to_fa", "cp_bem", "ho_yr", "ho_ar"]
 _EMPTY_COLS = ["연도", "집계구", "CODE", "값", "행정동코드"]

@@ -168,8 +168,9 @@ def write_calc_method(ws, indicators=TEMPLATE_INDICATORS):
 
 # ── 복합쇠퇴진단 종합 시트 ─────────────────────────────────────
 def write_composite(ws, codes, values, dong_names, indicators=TEMPLATE_INDICATORS,
-                    calc_sheet=CALC_SHEET):
-    """codes: 집계구코드 리스트(정렬). values: df(집계구 index × 12지표). dong_names: 8자리→명."""
+                    calc_sheet=CALC_SHEET, grades=None):
+    """codes: 집계구코드 리스트(정렬). values: df(집계구 index × 12지표). dong_names: 8자리→명.
+    grades: codes 순서의 Natural Break(Jenks) 등급 리스트(없으면 AW 비움)."""
     n = len(codes)
     N = 2 + n                              # 데이터 마지막 행(3..N)
     q = lambda s: f"'{s}'"                 # 시트명 인용
@@ -240,8 +241,9 @@ def write_composite(ws, codes, values, dong_names, indicators=TEMPLATE_INDICATOR
             f"=MIN(10,ROUNDUP(RANK({AT}{r},{rngT},0)/(COUNT({rngT})/10),0))")      # 등분위
         ws.cell(r, total_col + 2).value = (
             f"=MAX(1,MIN(10,ROUNDUP((MAX({rngT})-{AT}{r})/((MAX({rngT})-MIN({rngT}))/10),0)))")  # 등간격
-        # Natural Break: 후속(경계+VLOOKUP). 지금은 등분위와 동일 자리 비움.
-        ws.cell(r, total_col + 3).value = None
+        # Natural Break(Jenks): 엑셀 Jenks 함수가 없어 파이썬 경계 계산값을 정적 등급으로 기록.
+        ws.cell(r, total_col + 3).value = (int(grades[ridx]) if grades is not None
+                                           and ridx < len(grades) else None)
 
     # 표시서식 0.00 (지표값·Z·T·부문·종합)
     for r in range(3, N + 1):
@@ -313,6 +315,10 @@ def _item_name(bucket, code):
             pre, k = '', n
         if k == 22:
             return pre + '연령미상'
+        if k == 21:                       # 최고 밴드: 원본은 '100세이상'(상한 없음)
+            return pre + '100세이상'
+        if k == 1:                        # 최저 밴드: 원본은 '4세이하'(하한 없음)
+            return pre + '4세이하'
         lo = (k - 1) * 5
         return f'{pre}{lo}세이상~{lo + 4}세이하'
     return ''
@@ -578,7 +584,8 @@ def build_full_workbook(raw_sub, values=None, admin_path=None,
     ws_legal = wb.create_sheet(LEGAL_SHEET)
     # ③ 2 복합쇠퇴진단 종합
     ws_comp = wb.create_sheet('2 복합쇠퇴진단 종합')
-    write_composite(ws_comp, codes, vals, dong_names, indicators)
+    grades = _composite_grades(codes, vals, indicators)
+    write_composite(ws_comp, codes, vals, dong_names, indicators, grades=grades)
     cache['2 복합쇠퇴진단 종합'] = _composite_cached_values(codes, vals, indicators)
     # ④~⑨ 원시 6시트 (행수 기록 → 법적 VLOOKUP 범위에 사용)
     rowcount = {}
@@ -610,17 +617,13 @@ def _put_cache(m, ref, val):
     m[ref] = repr(f)
 
 
-def _composite_cached_values(codes, vals, indicators):
-    """복합종합 시트 수식셀의 '계산된 값'을 파이썬에서 산출 → {셀주소: 값문자열}.
-    엑셀 수식(Z=(V-AVG)/STDEV.P, T=Z×부호+50, 부문=ΣT×가중치, 종합=Σ부문, 등급)과
-    동일 규칙으로 계산해 셀에 캐시로 박는다(수식은 그대로 유지, 열자마자 값 표시)."""
+def _composite_at(codes, vals, indicators):
+    """복합종합 수식과 동일 규칙으로 Z·T·부문점수·종합(AT)을 파이썬에서 계산.
+    Z=(V-평균)/STDEV.P, T=Z×방향부호+50(빈칸=0), 부문=ΣT×가중치, 종합=Σ부문.
+    반환: (Zarr{i→ndarray}, Tarr{i→ndarray}, sec_sum{부문→ndarray}, AT ndarray)."""
     n = len(codes)
-    if n == 0:
-        return {}
-    vmap, Tarr = {}, {}
+    Zarr, Tarr = {}, {}
     for i, (iid, hdr, sec, sign, w) in enumerate(indicators):
-        vcol = 4 + i * 3
-        Zl = get_column_letter(vcol + 1); Tl = get_column_letter(vcol + 2)
         if iid in vals.columns:
             v = pd.to_numeric(vals[iid], errors='coerce').to_numpy(dtype=float)
         else:
@@ -637,19 +640,88 @@ def _composite_cached_values(codes, vals, indicators):
         else:                                        # 나머지: 빈칸이면 Z=T=0
             z = np.where(np.isnan(v), 0.0, ((v - mean) / std) if std > 0 else 0.0)
             t = np.where(np.isnan(v), 0.0, z * sign + 50.0)
-        Tarr[i] = t
-        for r in range(n):
-            _put_cache(vmap, f'{Zl}{3 + r}', z[r]); _put_cache(vmap, f'{Tl}{3 + r}', t[r])
-    base = 4 + len(indicators) * 3
+        Zarr[i], Tarr[i] = z, t
     sec_idx = {s: [i for i, ind in enumerate(indicators) if ind[2] == s] for s in SECTORS}
-    AT = np.zeros(n)
-    for s_i, sec in enumerate(SECTORS):
-        wcol = base + s_i * 2
-        ANl = get_column_letter(wcol); AOl = get_column_letter(wcol + 1)
+    sec_sum, AT = {}, np.zeros(n)
+    for sec in SECTORS:
         ssum = np.zeros(n)
         for i in sec_idx[sec]:
             ssum = ssum + Tarr[i] * float(indicators[i][4])
+        sec_sum[sec] = ssum
         AT = AT + ssum
+    return Zarr, Tarr, sec_sum, AT
+
+
+def _jenks_grades(at_values, k=10):
+    """종합(AT) 값 → Natural Breaks(Jenks) k등급. 종합이 클수록 1등급(쇠퇴 심함).
+    엑셀에는 Jenks 함수가 없어 파이썬(DP)으로 최적 자연분류 경계를 구해 등급을 매긴다.
+    반환: at_values와 같은 순서의 정수 등급 리스트(1~k)."""
+    at = np.asarray(list(at_values), dtype=float)
+    n = at.size
+    if n == 0:
+        return []
+    order = np.argsort(at, kind='mergesort')            # 오름차순(안정 정렬)
+    s = at[order]
+    keff = int(min(k, np.unique(s).size))
+    if keff <= 1:                                        # 값이 사실상 동일 → 전부 1등급
+        return [1] * n
+    p1 = np.concatenate(([0.0], np.cumsum(s)))
+    p2 = np.concatenate(([0.0], np.cumsum(s * s)))
+    dp = np.full((keff + 1, n + 1), np.inf)
+    split = np.zeros((keff + 1, n + 1), dtype=np.int64)
+    idx = np.arange(1, n + 1)
+    dp[1, 1:] = p2[1:] - p1[1:] ** 2 / idx               # segvar(1..l): 1분류 비용
+    for j in range(2, keff + 1):                         # 분류 수
+        for l in range(j, n + 1):                        # 앞 l개 점
+            ss = np.arange(j - 1, l)                      # 직전 경계 후보(앞 분류 원소 수)
+            a = ss + 1                                    # 마지막 분류 시작(1-index)
+            cnt = l - a + 1
+            seg = (p2[l] - p2[a - 1]) - (p1[l] - p1[a - 1]) ** 2 / cnt
+            cost = dp[j - 1, ss] + seg
+            m = int(np.argmin(cost))
+            dp[j, l] = cost[m]; split[j, l] = int(ss[m])
+    classes = np.empty(n, dtype=np.int64)
+    l = n
+    for j in range(keff, 0, -1):                         # 역추적: 경계로 class 배정
+        st = int(split[j, l]) if j > 1 else 0
+        classes[st:l] = j                                # 정렬순 st..l-1 → class j(값 클수록 큰 class)
+        l = st
+    # class(1=최저값 … keff=최고값) → 등급(최고값=1등급, 최저값=k등급으로 스케일)
+    grade_sorted = 1 + np.rint((keff - classes) * (k - 1) / (keff - 1)).astype(int)
+    out = np.empty(n, dtype=np.int64)
+    out[order] = grade_sorted
+    return out.tolist()
+
+
+def _composite_grades(codes, vals, indicators, k=10):
+    """복합종합 종합(AT) 기준 Natural Breaks(Jenks) 등급 리스트(codes 순서)."""
+    if len(codes) == 0:
+        return []
+    _z, _t, _s, AT = _composite_at(codes, vals, indicators)
+    return _jenks_grades(AT, k)
+
+
+def _composite_cached_values(codes, vals, indicators):
+    """복합종합 시트 수식셀의 '계산된 값'을 파이썬에서 산출 → {셀주소: 값문자열}.
+    엑셀 수식(Z=(V-AVG)/STDEV.P, T=Z×부호+50, 부문=ΣT×가중치, 종합=Σ부문, 등급)과
+    동일 규칙으로 계산해 셀에 캐시로 박는다(수식은 그대로 유지, 열자마자 값 표시).
+    ※ Natural Break(AW)는 수식이 아니라 정적 등급값이라 여기서 다루지 않는다(write_composite가 기록)."""
+    n = len(codes)
+    if n == 0:
+        return {}
+    Zarr, Tarr, sec_sum, AT = _composite_at(codes, vals, indicators)
+    vmap = {}
+    for i, (iid, hdr, sec, sign, w) in enumerate(indicators):
+        vcol = 4 + i * 3
+        Zl = get_column_letter(vcol + 1); Tl = get_column_letter(vcol + 2)
+        z, t = Zarr[i], Tarr[i]
+        for r in range(n):
+            _put_cache(vmap, f'{Zl}{3 + r}', z[r]); _put_cache(vmap, f'{Tl}{3 + r}', t[r])
+    base = 4 + len(indicators) * 3
+    for s_i, sec in enumerate(SECTORS):
+        wcol = base + s_i * 2
+        ANl = get_column_letter(wcol); AOl = get_column_letter(wcol + 1)
+        ssum = sec_sum[sec]
         for r in range(n):
             _put_cache(vmap, f'{ANl}{3 + r}', ssum[r]); _put_cache(vmap, f'{AOl}{3 + r}', ssum[r])
     total_col = base + len(SECTORS) * 2
@@ -757,7 +829,8 @@ def build_composite_workbook(raw_sub=None, admin_path=None, indicators=TEMPLATE_
     write_calc_method(wb.active, indicators)
     wb.active.title = CALC_SHEET
     ws2 = wb.create_sheet('2 복합쇠퇴진단 종합')
-    write_composite(ws2, codes, vals, dong_names, indicators)
+    grades = _composite_grades(codes, vals, indicators)
+    write_composite(ws2, codes, vals, dong_names, indicators, grades=grades)
     # 수식셀 계산값을 캐시로 박아 열자마자 값이 보이게(수식은 유지) → save_wb에서 주입
     wb._tmpl_cache = {'2 복합쇠퇴진단 종합': _composite_cached_values(codes, vals, indicators)}
     return wb
