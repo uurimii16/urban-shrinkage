@@ -8,6 +8,10 @@ RUN pip install --no-cache-dir --upgrade pip
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# 콜드스타트(부팅) 중 브라우저 탭에 잠깐 뜨는 기본 제목 'Streamlit'을 우리 제목으로 교체.
+# (앱이 뜨면 set_page_config 제목으로 바뀌지만, 로딩 몇 초 동안 이 index.html 제목이 보임)
+RUN python -c "import streamlit,os; p=os.path.join(os.path.dirname(streamlit.__file__),'static','index.html'); h=open(p,encoding='utf-8').read(); h=h.replace('<title>Streamlit</title>','<title>쇠퇴진단 자동화 시스템</title>'); open(p,'w',encoding='utf-8').write(h); print('patched index.html title')"
+
 COPY . .
 
 # Cloudtype가 PORT 환경변수를 주입하면 그 포트로, 없으면 8501.
