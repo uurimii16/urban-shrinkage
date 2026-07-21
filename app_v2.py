@@ -505,18 +505,18 @@ def _apply_render_results(results):
     ok = [r for r in results if r[1] == 200 and str(r[2]).strip() in ("1", "2")]
     err = [r for r in results if r not in ok]
     if any("로그인" in str(r[2]) for r in results):
-        st.error("쿠키가 만료/무효예요. SGIS 재로그인 후 쿠키를 새로 복사해 붙여넣으세요.")
+        st.error("쿠키가 만료되었거나 유효하지 않습니다. SGIS에 다시 로그인한 뒤 쿠키를 새로 복사해 붙여넣으십시오.")
     elif ok and not err:
-        st.success(f"신청 접수됨 — 시군구 {len(ok)}곳(응답 1=신청 / 2=저장, 둘 다 성공). "
-                   "잠시 뒤 **SGIS 승인** → **② 데이터의 ‘☁ 승인 자료 자동 다운로드’** 로 바로 받으세요.")
+        st.success(f"신청이 접수되었습니다 — 시군구 {len(ok)}곳(응답 1=신청 / 2=저장, 둘 다 성공). "
+                   "SGIS 승인 후 **② 데이터 입력의 ‘☁ 승인 자료 자동 다운로드’** 에서 바로 받으십시오.")
     elif ok:
-        st.warning(f"일부만 접수됨 — 성공 {len(ok)}곳 / 실패 {len(err)}곳. 아래 결과를 확인하세요.")
+        st.warning(f"일부만 접수되었습니다 — 성공 {len(ok)}곳 / 실패 {len(err)}곳. 아래 결과를 확인하십시오.")
     else:
         bad = err[0] if err else None
         bmsg = str(bad[2]) if bad else ""
         if "time" in bmsg.lower():
-            st.error("⏱ 신청 시간초과 — **쿠키 문제 아님.** 해외서버(streamlit.app)는 SGIS 정부서버 접속이 막혀요. "
-                     "**본인 PC 또는 국내서버(Cloudtype)에서 실행**해 신청하세요.")
+            st.error("⏱ 신청 시간초과 — **쿠키 문제가 아닙니다.** 해외 서버(streamlit.app)는 SGIS 정부 서버 접속이 차단됩니다. "
+                     "**본인 PC 또는 국내 서버(Cloudtype)에서 실행**해 신청하십시오.")
         else:
             st.error(f"신청 실패 — 서버 응답이 없거나 오류. {bmsg[:200]}")
     with st.expander(f"신청 결과 {len(results)}건", expanded=bool(err)):
@@ -530,23 +530,23 @@ def _apply_render_results(results):
 def _sgis_apply_block():
     """🏛 SGIS 집계구 자료신청 — 쿠키+지역+항목 선택 → saveRequestData 신청(제출).
     데이터는 승인(약 10분)·다운로드 후 '원시 SGIS CSV 폴더 경로'로 불러온다."""
-    st.caption("집계구 자료를 **신청(제출)까지 자동화**합니다. 항목 담기 노가다 없이 지역·항목만 고르면 끝. "
-               "승인(약 10분)·다운로드는 SGIS 승인 이메일 뒤 → 받은 폴더를 **‘원시 SGIS CSV 폴더 경로’** 모드로 불러오세요.")
-    with st.expander("❓ 복합쇠퇴 전체 분석에 어떤 데이터가 얼만큼 필요한가 (꼭 읽어보세요)", expanded=False):
+    st.caption("집계구 자료를 **신청(제출)까지 자동화**합니다. 항목을 일일이 담을 필요 없이 지역과 항목만 선택하면 됩니다. "
+               "승인(약 10분)·다운로드 후 받은 폴더를 **② 데이터 입력**의 **‘원시 SGIS CSV 폴더 경로’** 모드로 불러오십시오.")
+    with st.expander("❓ 복합쇠퇴 전체 분석에 어떤 데이터가 얼마나 필요한가 (꼭 확인)", expanded=False):
         st.markdown(SR.NEED_EXPLAIN)
 
     with st.expander("① SGIS 로그인 쿠키 붙여넣기", expanded=not ss.get("apply_cookie")):
-        st.markdown("**로그인한 요청 하나를 통째로 복사해 붙여넣기만 하면 돼요.** "
-                    "단, 꼭 **sgis.mods.go.kr 로 가는 요청**을 복사해야 신청에 필요한 값이 다 들어옵니다.")
+        st.markdown("**로그인한 요청 하나를 통째로 복사해 붙여넣으십시오.** "
+                    "반드시 **sgis.mods.go.kr 로 가는 요청**을 복사해야 신청에 필요한 값이 모두 포함됩니다.")
         st.caption("① SGIS **로그인** → **자료신청 페이지**(sgis.mods.go.kr) 열기 → ② **F12** → **Network** 탭 → "
                    "③ **F5(새로고침)** → ④ 목록 **맨 위 요청**(이름 `requestData` = 주소창과 같은 **sgis.mods.go.kr** 요청) "
                    "**우클릭 → Copy → Copy as cURL** → ⑤ 아래에 **통째로 붙여넣기**. "
-                   "⚠️ 광고·지도·통계 같은 **다른 사이트 요청**을 복사하면 값이 빠져요 — 꼭 **sgis.mods.go.kr** 요청으로.")
+                   "⚠️ 광고·지도·통계 등 **다른 사이트 요청**을 복사하면 값이 누락됩니다 — 반드시 **sgis.mods.go.kr** 요청으로 복사하십시오.")
         cookie_raw = st.text_area("여기에 통째로 붙여넣기 (Copy as cURL)", value=ss.get("apply_curl_raw", ""),
                                   height=90, key="in_apply_cookie", label_visibility="collapsed")
         with st.expander("잘 안 되면 — 값 2개만 직접 넣기"):
             st.caption("F12 → **Application**(크롬)/**저장소**(Firefox) → 왼쪽 **Cookies → sgis.mods.go.kr** → "
-                       "`JSESSIONID`·`accessToken` 두 줄의 **Value**를 복사해 아래에.")
+                       "`JSESSIONID`·`accessToken` 두 줄의 **Value**를 복사해 아래 칸에 입력하십시오.")
             mk1, mk2 = st.columns(2)
             js = mk1.text_input("JSESSIONID", value=ss.get("ck_js", ""), key="in_ck_js")
             at = mk2.text_input("accessToken", value=ss.get("ck_at", ""), key="in_ck_at")
@@ -563,15 +563,15 @@ def _sgis_apply_block():
         s1.markdown("✅ **JSESSIONID** 확인" if found["JSESSIONID"] else "❌ JSESSIONID 없음")
         s2.markdown("✅ **accessToken** 확인" if found["accessToken"] else "❌ accessToken 없음")
         if ss.get("apply_cookie") and all(found.values()):
-            st.success("준비 완료 — 아래에서 지역·항목 고르고 신청하세요.", icon="✅")
+            st.success("준비 완료 — 아래에서 지역·항목을 선택해 신청하십시오.", icon="✅")
         elif ss.get("apply_cookie"):
             miss = ", ".join(k for k, v in found.items() if not v)
-            st.warning(f"**{miss}** 이(가) 안 들어왔어요 — 다른 사이트 요청을 복사한 거예요. "
-                       "목록에서 **sgis.mods.go.kr** 로 가는 요청(맨 위 `requestData`)을 다시 복사해 붙여넣으세요.")
+            st.warning(f"**{miss}** 이(가) 포함되지 않았습니다 — 다른 사이트 요청을 복사한 경우입니다. "
+                       "목록에서 **sgis.mods.go.kr** 로 가는 요청(맨 위 `requestData`)을 다시 복사해 붙여넣으십시오.")
         cookie_raw = ss.get("apply_cookie", "")   # 이후 코드가 쓰는 변수 = 최종 확정 쿠키
 
     with st.expander("② 신청자 정보 (SGIS 신청서에 들어감 — 본인 정보 입력)", expanded=not ss.get("apply_userid")):
-        st.caption("SGIS 자료신청서에 채워지는 값이에요. 코드엔 저장 안 되고 이 세션에서만 사용합니다.")
+        st.caption("SGIS 자료신청서에 채워지는 값입니다. 코드에 저장되지 않으며 현재 세션에서만 사용됩니다.")
         ac1, ac2 = st.columns(2)
         ap_userid = ac1.text_input("SGIS 로그인 아이디", value=ss.get("apply_userid", ""), key="in_apply_userid")
         ap_company = ac2.text_input("소속/회사명", value=ss.get("apply_company", ""), key="in_apply_company")
@@ -582,8 +582,8 @@ def _sgis_apply_block():
 
     # ── ③ 지역 선택 (시도 고르면 그 시도의 시군구를 불러옴) ──────────────────
     st.markdown("**③ 지역 선택**")
-    st.caption("시도를 고르면 그 시도의 시군구가 자동으로 떠요(쿠키 필요). 여러 시군구를 클릭으로 선택하세요. "
-               "안 되면 아래 칸에 코드를 직접 넣어도 됩니다.")
+    st.caption("시도를 선택하면 해당 시도의 시군구가 자동으로 표시됩니다(쿠키 필요). 여러 시군구를 클릭해 선택하십시오. "
+               "표시되지 않으면 아래 칸에 코드를 직접 입력해도 됩니다.")
     ss.setdefault("sgg_cache", {})
     sido_opts = SR.SIDO_LIST              # 고정 17개 — 네트워크 불필요, 항상 표시
     sido_map = dict(sido_opts)
@@ -595,13 +595,13 @@ def _sgis_apply_block():
     if sido_code and sido_code not in cache:
         ck = SR.extract_cookie(cookie_raw or "")
         if not ck:
-            sc2.info("① 쿠키를 붙여넣으면 시군구 목록이 떠요.")
+            sc2.info("① 쿠키를 붙여넣으면 시군구 목록이 표시됩니다.")
         else:
             try:
                 with st.spinner(f"{sido_map.get(sido_code)} 시군구 불러오는 중…"):
                     cache[sido_code] = SR.fetch_sigungu_list(ck, sido_code)
             except Exception as e:
-                sc2.error(f"시군구 불러오기 실패: {e} — 쿠키가 만료됐으면 SGIS 재로그인 후 새 쿠키를 붙여넣으세요.")
+                sc2.error(f"시군구 불러오기 실패: {e} — 쿠키가 만료되었으면 SGIS에 다시 로그인한 뒤 새 쿠키를 붙여넣으십시오.")
     sgg_opts = cache.get(sido_code, [])
     sgg_map = dict(sgg_opts)
     all_codes = [c for c, _ in sgg_opts]
@@ -631,7 +631,7 @@ def _sgis_apply_block():
     # ── ④ 수집 연도: 부문별로 개별 선택·삭제 ──────────────────────────────
     st.markdown("**④ 수집 연도 (부문별로 개별 선택·삭제)**")
     st.caption("증감률 지표(총인구·사업체·종사자)는 기본 전 연도. **성연령·건축연도는 기본 최신(2024)** 이고, "
-               "다른 해로 비교하려면(예: 2023) 그 해를 추가하세요. (엔진은 분석 기준연도 1개만 사용)")
+               "다른 해로 비교하려면(예: 2023) 그 해를 추가하십시오. (엔진은 분석 기준연도 1개만 사용)")
     dom_keys = list(SR.YEAR_DOMAINS.keys())
     ycols = st.columns(2)
     for i, dk in enumerate(dom_keys):
@@ -640,7 +640,7 @@ def _sgis_apply_block():
         ycols[i % 2].multiselect(label, years, key=f"apply_years_{dk}", help=help_txt)
 
     st.markdown("**⑤ 받을 항목**")
-    st.caption("✅ 아래 **필수 5종 = 복합쇠퇴 전체세트.** 이것만 다 받으면 전체 결과표가 나와요(기본 선택됨).")
+    st.caption("✅ 아래 **필수 5종 = 복합쇠퇴 전체 세트.** 이 항목을 모두 받으면 전체 결과표가 산출됩니다(기본 선택됨).")
     checked = []
     req_names = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "필수"]
     opt_names = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "선택"]
@@ -654,8 +654,8 @@ def _sgis_apply_block():
                 checked.append(name)
             st.caption("　└ " + SR.ITEM_META[name][1])
 
-    test_first = st.checkbox("먼저 1건만 시험신청(작동 확인용)", value=True, key="apply_test_first",
-                             help="처음엔 켜서 1건만 신청→신청내역 확인 후, 끄고 전체 신청 권장.")
+    test_first = st.checkbox("먼저 1건만 시험 신청(작동 확인용)", value=True, key="apply_test_first",
+                             help="처음에는 켜서 1건만 신청한 뒤 신청내역을 확인하고, 끄고 전체 신청하는 것을 권장합니다.")
 
     def _persist_apply():
         ss.apply_cookie, ss.apply_region = cookie_raw, region
@@ -677,16 +677,16 @@ def _sgis_apply_block():
         unknown = [c for c in sgcodes if c[:2] in loaded_sido and c not in known]
         items = _apply_build_items(checked)
         if not cookie:
-            st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
+            st.error("쿠키를 붙여넣으십시오(JSESSIONID·accessToken이 확인되지 않으면 로그인·복사를 다시 하십시오).")
         elif not sgcodes:
-            st.error("시군구를 1개 이상 고르거나 코드를 입력하세요.")
+            st.error("시군구를 1개 이상 선택하거나 코드를 입력하십시오.")
         elif unknown:
-            st.error(f"목록에 없는 시군구코드: {', '.join(unknown)} — 오타이거나 SGIS가 제공하지 않는 지역이에요. "
-                     "위 목록에서 고르면 안전합니다(잘못된 코드는 신청이 타임아웃돼요).")
+            st.error(f"목록에 없는 시군구코드: {', '.join(unknown)} — 오타이거나 SGIS가 제공하지 않는 지역입니다. "
+                     "위 목록에서 선택하는 것이 안전합니다(잘못된 코드는 신청이 시간초과됩니다).")
         elif not items:
-            st.error("받을 항목·연도를 1개 이상 선택하세요.")
+            st.error("받을 항목·연도를 1개 이상 선택하십시오.")
         elif not ap_email.strip():
-            st.error("② 신청자 정보의 **이메일**을 입력하세요 — 비면 SGIS가 신청을 거부해요(응답 2).")
+            st.error("② 신청자 정보의 **이메일**을 입력하십시오 — 비어 있으면 SGIS가 신청을 거부합니다(응답 2).")
         else:
             _persist_apply()
             applicant = _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal)
@@ -694,18 +694,18 @@ def _sgis_apply_block():
                 results = _apply_submit_batch(cookie, sgcodes, items, applicant, only_first=test_first)
             ok = _apply_render_results(results)
             if test_first and ok:
-                st.info("1건 시험 성공 → 위 ‘먼저 1건만 시험신청’ 체크를 끄고 다시 눌러 전체 신청하세요.")
+                st.info("1건 시험 신청 성공 → 위 ‘먼저 1건만 시험 신청’ 체크를 끄고 다시 눌러 전체 신청하십시오.")
 
     if ab_all.button("🌏 전국 전체 시군구 신청", use_container_width=True,
-                     help="쿠키로 17개 시도의 모든 시군구를 불러와 한 번에 신청합니다(시험신청 무시). 시간이 오래 걸려요."):
+                     help="쿠키로 17개 시도의 모든 시군구를 불러와 한 번에 신청합니다(시험 신청 무시). 시간이 다소 걸립니다."):
         cookie = SR.extract_cookie(cookie_raw or "")
         items = _apply_build_items(checked)
         if not cookie:
-            st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 로그인/복사를 다시).")
+            st.error("쿠키를 붙여넣으십시오(JSESSIONID·accessToken이 확인되지 않으면 로그인·복사를 다시 하십시오).")
         elif not items:
-            st.error("받을 항목·연도를 1개 이상 선택하세요.")
+            st.error("받을 항목·연도를 1개 이상 선택하십시오.")
         elif not ap_email.strip():
-            st.error("② 신청자 정보의 **이메일**을 입력하세요 — 비면 SGIS가 신청을 거부해요(응답 2).")
+            st.error("② 신청자 정보의 **이메일**을 입력하십시오 — 비어 있으면 SGIS가 신청을 거부합니다(응답 2).")
         else:
             _persist_apply()
             # 17개 시도의 시군구를 모두 수집(캐시 재사용)
@@ -723,7 +723,7 @@ def _sgis_apply_block():
                             text=f"{i + 1}/{len(SR.SIDO_LIST)} 시도 · 누적 {len(allcodes)}곳")
             allcodes = list(dict.fromkeys(allcodes))
             if not allcodes:
-                st.error("시군구 목록을 못 불러왔어요 — 쿠키 만료 또는 해외IP 차단(국내서버에서 실행)일 수 있어요.")
+                st.error("시군구 목록을 불러오지 못했습니다 — 쿠키 만료 또는 해외 IP 차단(국내 서버에서 실행) 때문일 수 있습니다.")
             else:
                 applicant = _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal)
                 st.info(f"전국 **{len(allcodes)}개 시군구** 신청을 시작합니다. (‘시험신청’ 체크는 무시하고 전부 전송)")
@@ -732,7 +732,7 @@ def _sgis_apply_block():
                 def _cb(done, total, sg):
                     sp.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sg}")
 
-                with st.spinner(f"{len(allcodes)}개 시군구 신청 전송 중… (수 분 걸릴 수 있어요)"):
+                with st.spinner(f"{len(allcodes)}개 시군구 신청 전송 중… (수 분 걸릴 수 있습니다)"):
                     results = _apply_submit_batch(cookie, allcodes, items, applicant,
                                                   only_first=False, progress=_cb)
                 _apply_render_results(results)
@@ -757,9 +757,9 @@ def _sgis_input_block(mapping_items):
     if st.button("🌐 SGIS에서 수집", type="primary"):
         sgcodes = [s.strip() for s in region.split(",") if s.strip()]
         if not ck or not cs:
-            st.error("인증키(consumer_key/secret)를 입력하세요.")
+            st.error("인증키(consumer_key/secret)를 입력하십시오.")
         elif not sgcodes:
-            st.error("시군구코드를 1개 이상 입력하세요.")
+            st.error("시군구코드를 1개 이상 입력하십시오.")
         else:
             ss.sgis_key, ss.sgis_secret = ck, cs
             ss.sgis_yf, ss.sgis_yt, ss.sgis_region = int(yf), int(yt), region
@@ -809,8 +809,8 @@ def _sgis_input_block(mapping_items):
 # STEP 1 — 자료 신청 (SGIS 집계구 자료제공 신청)
 # ══════════════════════════════════════════════════════════════════════════
 def step1_apply():
-    sec("① 자료 신청", "SGIS 집계구 자료를 **신청(제출)까지 자동화**합니다. 승인(약 10분)·다운로드 후 → "
-        "**② 데이터 입력**에서 받은 폴더를 불러오세요. (이미 데이터가 있으면 이 단계는 건너뛰고 ②로 가세요.)")
+    sec("① 자료 신청", "SGIS 집계구 자료를 **신청(제출)까지 자동화**합니다. 승인(약 10분)·다운로드 후 "
+        "**② 데이터 입력**에서 받은 폴더를 불러오십시오.")
     _sgis_apply_block()
     st.markdown("")
     _, nav_r = st.columns([3, 1])
@@ -841,7 +841,7 @@ def _sgis_download_block(mapping_items):
     ss.setdefault("dl_items", None)
     ss.setdefault("dl_files", None)
     st.caption("신청 → **승인(약 10분, 이메일)** 후, SGIS 로그인 쿠키로 **승인된 자료 zip을 자동으로 받아 바로 불러옵니다.** "
-               "여러 건을 한 번에 받아 전국 배치 빌드로 이어갈 수 있어요. (국내 IP에서만 동작)")
+               "여러 건을 한 번에 받아 전국 배치 빌드로 이어갈 수 있습니다. (국내 IP에서만 동작)")
     ck_raw = st.text_area("SGIS 쿠키 (sgis.mods.go.kr 요청 Copy as cURL 통째로)",
                           value=ss.get("apply_cookie", ""), height=80, key="dl_cookie_raw",
                           help="① 신청 화면에 넣은 쿠키와 같은 걸 써도 됩니다. F12 → Network → F5 → "
@@ -851,17 +851,17 @@ def _sgis_download_block(mapping_items):
     if st.button("📋 승인된 자료 목록 불러오기"):
         ck = SR.extract_cookie(ck_raw or "")
         if not ck:
-            st.error("쿠키를 붙여넣으세요(JSESSIONID·accessToken이 안 보이면 SGIS 로그인/복사를 다시).")
+            st.error("쿠키를 붙여넣으십시오(JSESSIONID·accessToken이 확인되지 않으면 SGIS 로그인·복사를 다시 하십시오).")
         else:
             try:
                 with st.spinner("SGIS 다운로드 목록 조회 중…"):
                     ss.dl_items = SR.fetch_download_list(ck)
                 ss.apply_cookie = ck_raw
                 if not ss.dl_items:
-                    st.warning("다운로드 가능한(승인완료) 자료가 없어요. 승인 이메일을 기다리거나 SGIS 신청내역을 확인하세요.")
+                    st.warning("다운로드 가능한(승인완료) 자료가 없습니다. 승인 이메일을 기다리거나 SGIS 신청내역을 확인하십시오.")
             except Exception as e:
-                st.error(f"목록 불러오기 실패: {e} — 쿠키가 만료됐으면 SGIS 재로그인 후 새 쿠키. "
-                         "(해외서버에서 실행하면 SGIS가 차단해요 → 국내 PC/Cloudtype에서 실행)")
+                st.error(f"목록 불러오기 실패: {e} — 쿠키가 만료되었으면 SGIS에 다시 로그인해 새 쿠키를 받으십시오. "
+                         "(해외 서버에서 실행하면 SGIS가 차단합니다 → 국내 PC·Cloudtype에서 실행)")
     items = ss.get("dl_items")
     if items:
         items = sorted(items, key=lambda it: str(it.get("date", "")), reverse=True)  # 최근 신청 먼저
@@ -871,8 +871,8 @@ def _sgis_download_block(mapping_items):
         df = pd.DataFrame(items)[["req_id", "label", "date", "expire"]].copy()
         df.insert(0, "받음", ["✅" if it["req_id"] in done else "" for it in items])
         st.dataframe(df, use_container_width=True, height=240, hide_index=True)
-        st.caption("※ 목록 = **승인완료(만료 전) 자료 전부**예요. 이미 받은 것도 만료 전까진 다시 보입니다 "
-                   "(‘받음 ✅’ = 이번 세션에서 받은 표시). SGIS는 만료 전까진 재다운로드가 돼요.")
+        st.caption("※ 목록 = **승인완료(만료 전) 자료 전부**입니다. 이미 받은 것도 만료 전까지는 다시 표시됩니다 "
+                   "(‘받음 ✅’ = 이번 세션에서 받은 표시). SGIS는 만료 전까지 재다운로드가 가능합니다.")
         # ── 신청일·개수로 골라 받기 ──
         dates = sorted({it.get("date", "") for it in items if it.get("date")}, reverse=True)
         f1, f2, f3 = st.columns([2, 1, 1])
@@ -902,20 +902,20 @@ def _sgis_download_block(mapping_items):
             if errs:
                 st.warning("일부 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
             if files:
-                st.success(f"{len(files)}개 zip 다운로드 완료 → 아래 인식 결과 확인 후 진행하세요.")
+                st.success(f"{len(files)}개 zip 다운로드 완료 → 아래 인식 결과를 확인한 뒤 진행하십시오.")
     if ss.get("dl_files"):
         n_files = len(ss.dl_files)
         total_mb = sum(len(b) for _, b in ss.dl_files) / 1e6
         big = (total_mb > 40) or (n_files > 8)
         # ── 대용량: 시군구별 스트리밍 산출 (전체 로드 없이 → 서울 25구 같은 큰 지역도 안 터짐) ──
         with st.expander("🏙 대용량: 시군구별 스트리밍 산출 (전체 로드 없이 · 큰 지역 OK)", expanded=big):
-            st.caption("받은 파일을 **시군구별로 하나씩** 처리해 정본 양식(계산방법+복합종합) 엑셀을 각각 만들어 "
-                       "zip으로 묶어요. 전체를 메모리에 안 올려 **큰 지역도 안 터집니다.** "
-                       "가중치는 ③설정값(설정했으면)·없으면 정본 기본값.")
-            so = st.text_input("저장 폴더(비워두세요 · 로컬에서 직접 실행할 때만 사용)", value=ss.get("stream_out", ""),
+            st.caption("받은 파일을 **시군구별로 하나씩** 처리해 정본 양식(계산방법+복합종합) 엑셀을 각각 생성한 뒤 "
+                       "zip으로 묶습니다. 전체를 메모리에 올리지 않아 **큰 지역도 처리 가능합니다.** "
+                       "가중치는 ③설정값(설정한 경우)·없으면 정본 기본값을 사용합니다.")
+            so = st.text_input("저장 폴더(비워두십시오 · 로컬에서 직접 실행할 때만 사용)", value=ss.get("stream_out", ""),
                                key="in_stream_out", placeholder="비워두면 zip 다운로드만 (권장)",
-                               help="웹에서는 비워두세요. 결과는 아래 ‘zip 다운로드’로 받습니다. "
-                                    "이 칸은 내 PC에서 코드를 직접 돌릴 때 각 파일을 폴더에 저장하는 용도예요.")
+                               help="웹에서는 비워두십시오. 결과는 아래 ‘zip 다운로드’로 받습니다. "
+                                    "이 칸은 본인 PC에서 코드를 직접 실행할 때 각 파일을 폴더에 저장하는 용도입니다.")
             if st.button(f"⚙ 시군구별 스트리밍 산출 시작 ({n_files}개 파일 · {total_mb:.0f}MB)",
                          type="primary", use_container_width=True, key="stream_run"):
                 import batch_build as BB
@@ -970,7 +970,7 @@ def _sgis_download_block(mapping_items):
         # ── 전체 정제(작은 지역용) — 큰 데이터면 자동 로드를 건너뛰어 터짐 방지 ──
         do_full = st.checkbox("받은 데이터 전체를 이 앱으로 정제·분석 (작은 지역만 권장)",
                               value=not big, key="dl_full_load",
-                              help="서울 전체처럼 크면 꺼두세요 — 위 ‘스트리밍 산출’로 시군구별 결과만 받는 게 안전합니다.")
+                              help="서울 전체처럼 크면 꺼두십시오 — 위 ‘스트리밍 산출’로 시군구별 결과만 받는 것이 안전합니다.")
         if do_full:
             st.caption(f"받아둔 zip {len(ss.dl_files)}개로 데이터 구성 중… (연도/기준연도는 아래에서)")
             try:
@@ -1001,7 +1001,7 @@ def _merge_raw(a, b):
 
 def step1_data():
     sec("② 데이터 입력", "원시 SGIS 자료를 넣으면 내부 항목코드 기준으로 자동 분류합니다. "
-        "필요하면 보조 파일(매핑·참조코드)을 먼저 올리세요.")
+        "필요하면 보조 파일(매핑·참조코드)을 먼저 올리십시오.")
 
     if ss.raw is not None:
         try:
@@ -1009,9 +1009,9 @@ def step1_data():
         except Exception:
             _nsgg = 0
         _rows = sum(len(v) for v in ss.raw.values() if v is not None)
-        st.success(f"✅ 데이터가 이미 로드돼 있어요 — 시군구 **{_nsgg}곳** · 총 **{_rows:,}행**. "
-                   "**다시 안 올려도 됩니다.** (화면의 업로드 칸이 비어 보여도 데이터는 유지돼요.) "
-                   "아래는 **교체·추가**할 때만 쓰세요.")
+        st.success(f"✅ 데이터가 이미 로드되어 있습니다 — 시군구 **{_nsgg}곳** · 총 **{_rows:,}행**. "
+                   "**다시 올리지 않아도 됩니다.** (화면의 업로드 칸이 비어 보여도 데이터는 유지됩니다.) "
+                   "아래는 **교체·추가**할 때만 사용하십시오.")
 
     # 보조 파일
     mapping_items, name_map, code_label_map = None, None, {}
@@ -1025,9 +1025,9 @@ def step1_data():
                                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                                use_container_width=True)
             map_file = st.file_uploader("매핑 (열: 집계구코드, 행정동코드, 행정동명)", type=["xlsx", "csv"],
-                                        help="선택 사항. 전국 행정동 이름은 자동으로 붙어요 — 이 파일은 이름을 덮어쓰거나 보완할 때만.", key="map_file")
-            st.caption("✅ **전국 행정동 이름 자동** (행정구역코드 전국표 내장) — 어느 지역이든 파일 없이 이름이 붙어요. "
-                       "이름이 비거나 다르게 나올 때만 이 파일로 보완하세요.")
+                                        help="선택 사항. 전국 행정동 이름은 자동으로 붙습니다 — 이 파일은 이름을 덮어쓰거나 보완할 때만 사용합니다.", key="map_file")
+            st.caption("✅ **전국 행정동 이름 자동** (행정구역코드 전국표 내장) — 어느 지역이든 파일 없이 이름이 붙습니다. "
+                       "이름이 비거나 다르게 나올 때만 이 파일로 보완하십시오.")
         with cb:
             st.markdown("**참조 코드표**")
             st.caption("속성명 인식이 애매할 때만. 코드/명칭 열 자동 추정.")
@@ -1038,7 +1038,7 @@ def step1_data():
                 mdf = read_mapping_file(map_file)
                 mapping_items, name_map = parse_dong_mapping(mdf)
                 if not mapping_items and not name_map:
-                    st.error("매핑 파일에서 행정동코드/행정동명 열을 못 찾았어요. 열: [행정동코드, 행정동명] 또는 [집계구코드, 행정동코드, 행정동명]")
+                    st.error("매핑 파일에서 행정동코드/행정동명 열을 찾지 못했습니다. 열: [행정동코드, 행정동명] 또는 [집계구코드, 행정동코드, 행정동명]")
                 else:
                     msg = []
                     if mapping_items:
@@ -1056,7 +1056,7 @@ def step1_data():
                 st.error(f"참조 코드표 오류: {e}")
 
     # 입력 방식  (자료 신청은 ① 단계에서 별도)
-    st.caption("SGIS 집계구 자료를 아직 안 받았으면 **① 자료 신청**에서 먼저 신청하세요.")
+    st.caption("SGIS 집계구 자료를 아직 받지 않았으면 **① 자료 신청**에서 먼저 신청하십시오.")
     src = st.radio("입력 방식", ["원시 SGIS 자료 (드래그·폴더/zip 경로)", "☁ SGIS 승인 자료 자동 다운로드", "원시 SGIS CSV 파일 업로드(인구·산업·물리 탭)", "🌐 SGIS API 직접받기(행정동·보조)", "이미 만든 법적 data 시트(xlsx)"],
                    horizontal=True, key="src_mode")
 
@@ -1076,7 +1076,7 @@ def step1_data():
             st.info("필요한 시트: " + ", ".join(f"`{s}`" for s in golden_io.REQUIRED_SHEETS))
 
     elif src.startswith("원시 SGIS CSV 파일"):
-        st.caption("인구/산업/물리 카테고리별로 CSV/TXT 또는 **zip(압축 그대로)** 을 올리면 내부 CODE 기준으로 자동 분류합니다. **zip은 자동으로 풀려요.**")
+        st.caption("인구/산업/물리 카테고리별로 CSV/TXT 또는 **zip(압축 그대로)** 을 올리면 내부 CODE 기준으로 자동 분류합니다. **zip은 자동으로 해제됩니다.**")
         with st.expander("컬럼 매핑 보정 (파일 구조가 다를 때만)", expanded=False):
             mc1, mc2, mc3, mc4 = st.columns(4)
             col_year = mc1.number_input("연도 열", 1, 50, 1, 1)
@@ -1105,14 +1105,14 @@ def step1_data():
             except ValueError as e:
                 st.error(str(e))
         else:
-            st.info("원시 SGIS CSV/TXT 파일을 업로드하세요.")
+            st.info("원시 SGIS CSV/TXT 파일을 업로드하십시오.")
 
     else:  # 드래그앤드롭 또는 폴더/zip 경로
         st.markdown("**① 파일을 여기로 끌어다 놓기** (zip 그대로 OK) — 또는 **② 아래에 폴더/zip 경로 입력**")
         drop = st.file_uploader("여기로 zip·CSV/TXT 드래그앤드롭 (여러 개 OK)",
                                 type=["csv", "txt", "zip"], accept_multiple_files=True, key="path_drop")
-        st.caption("💡 파일을 **경로 입력칸**에 드래그하면 브라우저 보안상 경로가 안 들어가요 → **위 드롭존**을 쓰세요. "
-                   "폴더/zip 경로 방식은 앱과 **같은 PC**에서 실행할 때만 됩니다.")
+        st.caption("💡 파일을 **경로 입력칸**에 드래그하면 브라우저 보안상 경로가 입력되지 않습니다 → **위 드롭존**을 사용하십시오. "
+                   "폴더/zip 경로 방식은 앱과 **같은 PC**에서 실행할 때만 동작합니다.")
         paths = st.text_area("원시 CSV 폴더/zip 경로 (줄바꿈으로 여러 개)", height=80,
                              placeholder="D:/…/260413_SGIS_베이스자료\nD:/…/원본데이터.zip")
         folders = [p.strip() for p in paths.splitlines() if p.strip()]
@@ -1125,7 +1125,7 @@ def step1_data():
                     raw_new = cached_load_uploads(_files_sig(drop), tuple(mapping_items or []))
                     split_summary = L.summarize_uploaded_files(drop) if hasattr(L, "summarize_uploaded_files") else pd.DataFrame()
                 got = {b: len(v) for b, v in raw_new.items() if len(v)}
-                st.success("드래그 파일 인식: " + ", ".join(f"{b}({n})" for b, n in got.items()) if got else "인식된 데이터가 없어요(형식 확인).")
+                st.success("드래그 파일 인식: " + ", ".join(f"{b}({n})" for b, n in got.items()) if got else "인식된 데이터가 없습니다(형식 확인).")
                 if len(split_summary):
                     with st.expander("분할/압축 통합 요약", expanded=False):
                         st.dataframe(split_summary, use_container_width=True, height=220)
@@ -1152,7 +1152,7 @@ def step1_data():
             except ValueError as e:
                 st.error(str(e))
         else:
-            st.info("① 파일을 드래그하거나 ② 폴더/zip 경로를 입력하세요.")
+            st.info("① 파일을 드래그하거나 ② 폴더/zip 경로를 입력하십시오.")
 
     # 기존 세션 데이터 재사용 / 교체 · 추가
     if raw_new is not None and ss.raw is not None:
@@ -1161,10 +1161,10 @@ def step1_data():
                          help="추가=기존 시군구에 새 데이터를 합침(중복 자동 제거). 교체=기존을 버리고 새 것만.")
         if _mode.startswith("기존에 추가"):
             raw = _merge_raw(ss.raw, raw_new)
-            st.success("기존 데이터에 **추가(병합)** 했어요. (중복 자동 제거)")
+            st.success("기존 데이터에 **추가(병합)** 했습니다. (중복 자동 제거)")
         else:
             raw = raw_new
-            st.info("기존 데이터를 **교체** 했어요.")
+            st.info("기존 데이터를 **교체** 했습니다.")
     else:
         raw = raw_new if raw_new is not None else ss.raw
     if raw is None:
@@ -1176,10 +1176,10 @@ def step1_data():
     years = sheet_builder.all_years(raw)
     default_years = [y for y in (ss.selected_years or years) if y in years] or years
     picked = st.multiselect("출력/산출에 사용할 연도", years, default=default_years,
-                            help="지웠다 다시 넣어도 칸 순서와 무관하게 항상 연도순(오름차순)으로 처리돼요.")
+                            help="지웠다 다시 넣어도 칸 순서와 무관하게 항상 연도순(오름차순)으로 처리됩니다.")
     selected_years = sorted(picked)          # 선택 순서와 무관하게 항상 연도 오름차순
     if not selected_years:
-        st.error("최소 1개 이상의 연도를 선택하세요.")
+        st.error("최소 1개 이상의 연도를 선택하십시오.")
         return
     st.caption("사용 연도(정렬됨): " + ", ".join(map(str, selected_years)))
     raw_selected = sheet_builder.filter_raw_years(raw, selected_years)
@@ -1216,7 +1216,7 @@ def step1_data():
         for w in warns:
             st.warning("⚠️ " + w)
     else:
-        st.success(f"기준연도(인구 {int(pop_ref)} · 산업 {int(biz_ref)}) 데이터가 모두 확인됐어요.")
+        st.success(f"기준연도(인구 {int(pop_ref)} · 산업 {int(biz_ref)}) 데이터가 모두 확인되었습니다.")
 
     with st.expander("입력 데이터 분류 상태", expanded=False):
         bs = pd.DataFrame([
@@ -1228,8 +1228,8 @@ def step1_data():
     # ── 코드표 안전장치(③): 엔진이 합산할 코드가 실제 데이터에 있는지 점검 ──
     code_warns, code_df = CA.audit(raw_selected, pop_year=int(pop_ref), biz_year=int(biz_ref))
     if code_warns:
-        st.warning("⚠️ 코드 점검: 엔진이 합산할 코드 일부가 데이터에 없어요(값이 조용히 과소계산될 수 있음). "
-                   "아래 '코드 점검 상세'에서 확인하세요.")
+        st.warning("⚠️ 코드 점검: 엔진이 합산할 코드 일부가 데이터에 없습니다(값이 조용히 과소계산될 수 있음). "
+                   "아래 '코드 점검 상세'에서 확인하십시오.")
     with st.expander(f"코드 점검 상세 — {'⚠ 누락 ' + str(len(code_warns)) + '건' if code_warns else '전부 정상'}",
                      expanded=bool(code_warns)):
         st.caption("기본 12지표는 SGIS 코드를 '위치(positional)'로 합산합니다. 코드체계가 바뀌면 조용히 틀리므로, "
@@ -1239,7 +1239,7 @@ def step1_data():
             st.markdown(f"- {w}")
 
         st.markdown("**엔진이 계산 시 가정하는 코드셋** — 데이터엔 코드의 '뜻'이 없으니, 아래 표로 "
-                    "*엔진이 어떤 코드를 더하는지*를 직접 확인하세요. (SGIS 코드표가 바뀌면 config.py 수정 필요)")
+                    "*엔진이 어떤 코드를 더하는지*를 직접 확인하십시오. (SGIS 코드표가 바뀌면 config.py 수정 필요)")
         st.dataframe(CA.assumptions_table(raw_selected, pop_year=int(pop_ref), biz_year=int(biz_ref)),
                      use_container_width=True, height=430, hide_index=True)
 
@@ -1247,16 +1247,16 @@ def step1_data():
         return k not in raw_selected or raw_selected[k].empty
     missing_core = [k for k in REQUIRED_CORE if _empty(k)]
     if missing_core:
-        st.info("아래 **필수 분류**가 없으면 최종 진단이 부정확할 수 있어요(개별 시트는 가능): " + ", ".join(missing_core))
+        st.info("아래 **필수 분류**가 없으면 최종 진단이 부정확할 수 있습니다(개별 시트는 가능): " + ", ".join(missing_core))
     missing_opt = [k for k in OPTIONAL_BUCKETS if _empty(k)]
     if missing_opt:
         st.caption("· 선택 분류 미포함(없어도 됨): " + ", ".join(missing_opt)
-                   + " — 소형주택비율 등 ‘복제’ 지표를 쓸 때만 필요해요.")
+                   + " — 소형주택비율 등 ‘복제’ 지표를 쓸 때만 필요합니다.")
 
     # (구) '전국 시군구 배치 빌드' expander는 ⑤ 산출의 '선택 시군구 개별 산출'로 이동·개조함
     #  — ③설정 가중치를 쓰려면 설정 뒤(⑤)에 있어야 하므로 위치를 옮김.
     st.caption("💡 여러 시군구를 골라 **③설정 가중치 그대로** 개별 정본 양식으로 뽑으려면 "
-               "**⑤ 진단 산출 화면의 ‘선택 시군구 개별 산출’** 을 쓰세요. "
+               "**⑤ 진단 산출 화면의 ‘선택 시군구 개별 산출’** 을 사용하십시오. "
                "(전국 전체를 디폴트로 자동 신청·빌드하려면 🚀 전국 디폴트 원스톱)")
 
     st.markdown("")
@@ -1276,10 +1276,10 @@ def step1_data():
 # ══════════════════════════════════════════════════════════════════════════
 def step2_settings():
     if ss.raw is None:
-        st.info("먼저 ② 데이터 입력에서 데이터를 불러오세요.")
+        st.info("먼저 ② 데이터 입력에서 데이터를 불러오십시오.")
         return
     sec("③ 설정", "모든 지표(기본·계산식·값)를 **지표 마스터** 한 표에서 켜고/끄고 가중치를 정합니다. "
-        "기본지표는 '복제해서 수정', 새 지표는 아래 편집기에서 만들고, 외부에서 계산한 값은 파일로 가져올 수 있어요.")
+        "기본지표는 '복제해서 수정', 새 지표는 아래 편집기에서 만들고, 외부에서 계산한 값은 파일로 가져올 수 있습니다.")
 
     # 마스터 표를 화면 위쪽에 두기 위한 자리(내용은 아래 편집기 처리 후 채운다)
     master_box = st.container()
@@ -1418,7 +1418,7 @@ def step2_settings():
             approx = "" if RE.BUILTIN_SEEDS[clone_sel]["exact"] else \
                 "  ⚠ 이 지표는 산업 8차(≤2005년) 코드분기가 있어 사본은 최신 차수 코드 기준 '근사'입니다."
             ss.clone_notice = (f"'{clone_sel}' → **{recipe['name']}** 사본을 만들었습니다. "
-                               f"원본은 꺼두었고, 아래 '🧮 계산식 지표' 편집기에서 수정하세요.{approx}")
+                               f"원본은 꺼두었고, 아래 '🧮 계산식 지표' 편집기에서 수정하십시오.{approx}")
             st.rerun()
 
         left, right = st.columns([3, 2], gap="large")
@@ -1436,7 +1436,7 @@ def step2_settings():
             ss.sector_df = sector_edit
             sector_ratio = {s: float(sector_edit.at[s, "부문비율"]) for s in C.SECTORS}
             if abs(sum(sector_ratio.values()) - 100.0) > 1e-6:
-                st.warning(f"부문비율 합계 = {sum(sector_ratio.values()):.2f}% → 100%로 맞춰주세요.")
+                st.warning(f"부문비율 합계 = {sum(sector_ratio.values()):.2f}% → 100%로 맞추십시오.")
 
             st.markdown("**지표 마스터** — ✅사용으로 켜고/끄고, 부문 내부가중치는 부문 안에서 합 100 기준")
             base_rows = []
@@ -1473,7 +1473,7 @@ def step2_settings():
                 base_locked = [i for i in del_sel if origin_all.get(i) == "기본"]
                 removable = [i for i in del_sel if origin_all.get(i) != "기본"]
                 dc1, dc2 = st.columns([3, 2])
-                note = f"삭제 대기: {', '.join(removable)}" if removable else "삭제할 계산식·값 지표를 체크하세요."
+                note = f"삭제 대기: {', '.join(removable)}" if removable else "삭제할 계산식·값 지표를 체크하십시오."
                 if base_locked:
                     note += f"  ·  기본지표는 삭제 불가(사용 해제만): {', '.join(base_locked)}"
                 dc1.caption(note)
@@ -1532,7 +1532,7 @@ def step2_settings():
             cnt_rec = sum(1 for i in all_inds if origin_all.get(i) == "계산식")
             cnt_val = sum(1 for i in all_inds if origin_all.get(i) == "값")
             st.caption(f"**지표 구성**\n\n· 기본 {cnt_base}개\n· 계산식 {cnt_rec}개\n· 값(파일) {cnt_val}개")
-            st.caption("지표 추가·정의는 아래 두 편집기에서, 사용·가중치·삭제(계산식/값)는 위 마스터 표에서 조정하세요.")
+            st.caption("지표 추가·정의는 아래 두 편집기에서, 사용·가중치·삭제(계산식/값)는 위 마스터 표에서 조정하십시오.")
             st.markdown("</div>", unsafe_allow_html=True)
 
     # 계산 결과 스냅샷 (다음 단계에서 사용) — '사용' 지표만 반영
@@ -1556,9 +1556,9 @@ def step2_settings():
 # ══════════════════════════════════════════════════════════════════════════
 def step3_review():
     if ss.raw is None:
-        st.info("먼저 ② 데이터 입력에서 데이터를 불러오세요.")
+        st.info("먼저 ② 데이터 입력에서 데이터를 불러오십시오.")
         return
-    sec("④ 시트 검토", "필요한 개별 DATA/피벗 시트를 미리 보고, 원하면 개별 시트만 먼저 Excel로 만들 수 있어요.")
+    sec("④ 시트 검토", "필요한 개별 DATA/피벗 시트를 미리 보고, 원하면 개별 시트만 먼저 Excel로 만들 수 있습니다.")
     raw_selected = sheet_builder.filter_raw_years(ss.raw, ss.selected_years)
 
     with st.expander("개별 DATA 시트 미리보기", expanded=True):
@@ -1642,7 +1642,7 @@ def step3_review():
 # ══════════════════════════════════════════════════════════════════════════
 def step4_run():
     if ss.raw is None:
-        st.info("먼저 ② 데이터 입력에서 데이터를 불러오세요.")
+        st.info("먼저 ② 데이터 입력에서 데이터를 불러오십시오.")
         return
     sec("⑤ 진단 산출", "법적쇠퇴진단 + 복합쇠퇴지수를 계산하고 통합 Excel을 내려받습니다.")
     raw_selected = sheet_builder.filter_raw_years(ss.raw, ss.selected_years)
@@ -1688,7 +1688,7 @@ def step4_run():
 
     if not indicator_ids:
         st.error("사용 중인 복합지표에 필요한 데이터가 하나도 없습니다. "
-                 "③ 설정에서 데이터가 있는 지표를 켜거나, ② 데이터에서 분류를 보완하세요.")
+                 "③ 설정에서 데이터가 있는 지표를 켜거나, ② 데이터에서 분류를 보완하십시오.")
         miss_all = [b for b in REQUIRED_FULL if b not in available]
         if miss_all:
             st.dataframe(missing_bucket_message(miss_all), use_container_width=True)
@@ -1698,8 +1698,8 @@ def step4_run():
     pre_warns, pre_df = CA.audit(raw_selected,
                                  pop_year=ss.get("pop_ref_year"), biz_year=ss.get("biz_ref_year"))
     if pre_warns:
-        st.warning("⚠️ 코드 점검: 엔진이 합산할 코드에 문제가 있어요(값이 조용히 과소/과대계산될 수 있음). "
-                   "필요하면 ② 데이터로 돌아가 확인하세요.")
+        st.warning("⚠️ 코드 점검: 엔진이 합산할 코드에 문제가 있습니다(값이 조용히 과소/과대계산될 수 있음). "
+                   "필요하면 ② 데이터로 돌아가 확인하십시오.")
         with st.expander(f"산출 직전 코드 점검 상세 — ⚠ {len(pre_warns)}건", expanded=False):
             st.dataframe(pre_df, use_container_width=True, height=260, hide_index=True)
             for w in pre_warns:
@@ -1730,10 +1730,10 @@ def step4_run():
         import batch_build as BB
         st.caption("업로드한 데이터에서 시군구를 **골라**, ③설정의 **가중치·지표 구성 그대로** "
                    "시군구마다 **정본 양식(계산방법+복합종합) 엑셀을 따로** 만듭니다. "
-                   "각 시군구는 그 안에서 독립 표준화되고, 커스텀·계산식 지표값도 반영돼요.")
+                   "각 시군구는 그 안에서 독립 표준화되고, 커스텀·계산식 지표값도 반영됩니다.")
         sgg_all = BB.list_sigungu(raw_selected)
         if not sgg_all:
-            st.info("데이터에서 시군구를 인식하지 못했어요(집계구 14자리 또는 시군구 5자리 필요).")
+            st.info("데이터에서 시군구를 인식하지 못했습니다(집계구 14자리 또는 시군구 5자리 필요).")
         else:
             sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
             pick = st.multiselect(
@@ -1856,7 +1856,7 @@ def step4_run():
     # 결과 표시
     res = ss.results
     if not res:
-        st.caption("위 버튼을 눌러 진단을 산출하세요. 산출 결과 요약과 순위 차트, 통합 Excel 다운로드가 여기에 표시됩니다.")
+        st.caption("위 버튼을 눌러 진단을 산출하십시오. 산출 결과 요약과 순위 차트, 통합 Excel 다운로드가 여기에 표시됩니다.")
         return
 
     st.success("진단 산출 완료")
@@ -1889,7 +1889,7 @@ def step4_run():
         st.markdown("**📐 정본 양식 (계산방법 + 복합쇠퇴진단 종합 · 집계구 단위)**")
         st.caption("③ 설정의 **방향부호·최종가중치**가 첫 시트(계산방법 E24~)에 그대로 써지고, "
                    "복합쇠퇴진단 종합 시트가 그 셀을 **엑셀 함수로 참조**합니다. "
-                   "설정을 바꿔 다시 산출하면 값이 함수로 자동 재계산돼요.")
+                   "설정을 바꿔 다시 산출하면 값이 함수로 자동 재계산됩니다.")
         if st.button("정본 양식 생성 (가중치 반영)", use_container_width=True, key="build_template"):
             try:
                 inds = TE.indicators_from_cfg(ss.cfg)
@@ -1908,7 +1908,7 @@ def step4_run():
                            f"최종가중치 합계 {sum(i[4] for i in inds) * 100:.2f}%")
             except FileNotFoundError:
                 st.error(f"행정구역코드 표를 찾을 수 없습니다: {TE.DEFAULT_ADMIN_PATH}\n"
-                         "행정구역코드_전국.xlsx 위치를 확인하세요.")
+                         "행정구역코드_전국.xlsx 위치를 확인하십시오.")
             except Exception as e:
                 st.error(f"정본 양식 생성 실패: {e}")
         if res.get("template_xlsx"):
@@ -1963,13 +1963,13 @@ def nationwide_onestop():
     import batch_build as BB
     sec("🚀 전국 디폴트 원스톱",
         "전국 시군구를 **디폴트 지표·가중치** 그대로 집계구별로 받아, 시군구별 엑셀(함수 포함 전체 시트·"
-        "집계구+행정동·최종표)을 한 번에 구축합니다. 일반 단계별 분석과 분리된 전용 화면이에요.")
+        "집계구+행정동·최종표)을 한 번에 구축합니다. 일반 단계별 분석과 분리된 전용 화면입니다.")
     if st.button("← 일반 단계별 분석으로 돌아가기"):
         ss.nationwide = False
         st.rerun()
 
     st.info("흐름: **① 전국 신청** → (SGIS 승인 이메일 대기, 약 10분~) → **② 자동 다운로드 + 229개 빌드**. "
-            "승인 사이의 대기만 사람이 기다리면 되고, 나머지는 버튼 두 번이에요.")
+            "승인 사이의 대기만 사람이 기다리면 되고, 나머지는 버튼 두 번으로 끝납니다.")
 
     # ── 0. 쿠키(공통) ──
     ck_raw = st.text_area("SGIS 쿠키 (sgis.mods.go.kr 요청 Copy as cURL 통째로)",
@@ -1981,23 +1981,23 @@ def nationwide_onestop():
     with st.container(border=True):
         st.markdown("### 1. 전국 시군구 신청")
         st.caption("전국 모든 시군구의 집계구 자료를 **디폴트 필수항목**으로 한 번에 신청합니다. "
-                   "승인 알림 이메일이 꼭 필요해요.")
+                   "승인 알림 이메일이 반드시 필요합니다.")
         nw_email = st.text_input("승인 알림 이메일", value=ss.get("apply_email", ""), key="nw_email")
         if st.button("🏛 전국 신청 실행", key="nw_apply"):
             ck = SR.extract_cookie(ck_raw or "")
             checked = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "필수"]
             items = _apply_build_items(checked)
             if not ck:
-                st.error("쿠키를 붙여넣으세요.")
+                st.error("쿠키를 붙여넣으십시오.")
             elif not nw_email.strip():
-                st.error("승인 알림 이메일을 입력하세요 — 비면 SGIS가 신청을 거부해요.")
+                st.error("승인 알림 이메일을 입력하십시오 — 비어 있으면 SGIS가 신청을 거부합니다.")
             else:
                 ss.apply_cookie, ss.apply_email = ck_raw, nw_email
                 lp = st.progress(0, text="전국 시군구 목록 수집 중…")
                 allcodes = _fetch_all_sigungu(
                     ck, progress=lambda d, t, a: lp.progress(int(d / t * 100), text=f"{d}/{t} 시도 · 누적 {a}곳"))
                 if not allcodes:
-                    st.error("시군구 목록을 못 불러왔어요 — 쿠키 만료 또는 해외IP 차단.")
+                    st.error("시군구 목록을 불러오지 못했습니다 — 쿠키 만료 또는 해외 IP 차단.")
                 else:
                     applicant = _apply_build_applicant("", "", nw_email, "", "복합쇠퇴진단")
                     st.info(f"전국 **{len(allcodes)}개 시군구** 신청 시작…")
@@ -2006,13 +2006,13 @@ def nationwide_onestop():
                         ck, allcodes, items, applicant, only_first=False,
                         progress=lambda d, t, sg: sp.progress(int(d / max(1, t) * 100), text=f"{d}/{t} · {sg}"))
                     _apply_render_results(results)
-                    st.caption("↳ 승인 이메일이 오면 아래 **2번**을 실행하세요.")
+                    st.caption("↳ 승인 이메일이 오면 아래 **2번**을 실행하십시오.")
 
     # ── 2. 자동 다운로드 → 디폴트 빌드 → 저장 ──
     with st.container(border=True):
         st.markdown("### 2. 승인 자료 자동 다운로드 → 디폴트 시트 빌드 → 저장")
         st.caption("승인 이메일을 받은 뒤 클릭하면, 승인된 자료를 **전부 자동 다운로드**해서 시군구별 "
-                   "**디폴트 전체 시트(함수 포함)** 엑셀을 만들고 zip으로 묶어요.")
+                   "**디폴트 전체 시트(함수 포함)** 엑셀을 만들고 zip으로 묶습니다.")
         oc1, oc2 = st.columns([2, 1])
         nw_out = oc1.text_input("저장 폴더 경로(선택 · 로컬 실행 시 착착 저장)", value=ss.get("batch_out", ""),
                                 key="nw_out", placeholder=r"예: D:\쇠퇴진단_전국출력")
@@ -2023,7 +2023,7 @@ def nationwide_onestop():
         if st.button("🚀 자동 다운로드 → 전국 빌드 실행", type="primary", key="nw_run"):
             ck = SR.extract_cookie(ck_raw or "")
             if not ck:
-                st.error("쿠키를 붙여넣으세요.")
+                st.error("쿠키를 붙여넣으십시오.")
             else:
                 try:
                     with st.spinner("승인 자료 목록 조회 중…"):
@@ -2032,7 +2032,7 @@ def nationwide_onestop():
                     items = None
                     st.error(f"목록 조회 실패: {e} — 쿠키 만료/해외IP 여부 확인.")
                 if items is not None and not items:
-                    st.warning("다운로드 가능한(승인완료) 자료가 없어요. 승인 이메일을 기다리세요.")
+                    st.warning("다운로드 가능한(승인완료) 자료가 없습니다. 승인 이메일을 기다리십시오.")
                 elif items:
                     ss.apply_cookie = ck_raw
                     dp = st.progress(0, text=f"0/{len(items)} 다운로드")
@@ -2047,7 +2047,7 @@ def nationwide_onestop():
                     if errs:
                         st.warning("일부 다운로드 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
                     if not files:
-                        st.error("받은 자료가 없어요.")
+                        st.error("받은 자료가 없습니다.")
                     else:
                         with st.spinner("데이터 정제 중…"):
                             raw = cached_load_uploads(tuple(files), tuple())
