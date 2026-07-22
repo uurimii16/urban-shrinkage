@@ -162,8 +162,21 @@ def write_calc_method(ws, indicators=TEMPLATE_INDICATORS):
         ws.cell(r, 5).value = w                    # E열 최종가중치 ← 복합종합이 참조
         for c in range(1, 6):
             ws.cell(r, c).border = _BORDER
+    # 가중치 합계 행 — 지표를 더하거나 빼도 SUM 범위가 지표 수에 맞춰 자동 생성됨(합=1.00=100% 확인용).
+    # 함수(SUM)이므로 사용자가 가중치를 바꾸면 엑셀이 이 합계도 자동 재계산한다.
+    sum_row = 24 + len(indicators)
+    if indicators:
+        ws.cell(sum_row, 4).value = '가중치 합계'
+        ws.cell(sum_row, 4).font = _HDR_FONT
+        ws.cell(sum_row, 4).alignment = _CENTER
+        ws.cell(sum_row, 5).value = f"=SUM(E24:E{24 + len(indicators) - 1})"
+        ws.cell(sum_row, 5).font = _HDR_FONT
+        ws.cell(sum_row, 5).number_format = '0.0000'
+        for c in range(1, 6):
+            ws.cell(sum_row, c).border = _BORDER
     ws.column_dimensions['A'].width = 22
     ws.column_dimensions['C'].width = 46
+    return sum_row
 
 
 # ── 복합쇠퇴진단 종합 시트 ─────────────────────────────────────
@@ -578,8 +591,11 @@ def build_full_workbook(raw_sub, values=None, admin_path=None,
     wb = openpyxl.Workbook()
     cache = {}
     # ① 계산방법
-    write_calc_method(wb.active, indicators)
+    sum_row = write_calc_method(wb.active, indicators)
     wb.active.title = CALC_SHEET
+    if indicators:                     # 가중치 합계 함수의 계산값을 캐시(뷰어에서 바로 보이게)
+        wsum = sum(float(w) for (*_x, w) in indicators)
+        cache.setdefault(CALC_SHEET, {})[f"E{sum_row}"] = repr(wsum)
     # ② 1 법적쇠퇴진단 종합 (원시시트 행수 먼저 계산 필요 → 시트 생성/기록은 뒤, 행수 산정)
     ws_legal = wb.create_sheet(LEGAL_SHEET)
     # ③ 2 복합쇠퇴진단 종합
@@ -827,11 +843,15 @@ def build_composite_workbook(raw_sub=None, admin_path=None, indicators=TEMPLATE_
     codes = sorted(vals.index.astype(str))
     vals = vals.loc[codes]
     wb = openpyxl.Workbook()
-    write_calc_method(wb.active, indicators)
+    sum_row = write_calc_method(wb.active, indicators)
     wb.active.title = CALC_SHEET
     ws2 = wb.create_sheet('2 복합쇠퇴진단 종합')
     grades = _composite_grades(codes, vals, indicators)
     write_composite(ws2, codes, vals, dong_names, indicators, grades=grades)
     # 수식셀 계산값을 캐시로 박아 열자마자 값이 보이게(수식은 유지) → save_wb에서 주입
-    wb._tmpl_cache = {'2 복합쇠퇴진단 종합': _composite_cached_values(codes, vals, indicators)}
+    cache = {'2 복합쇠퇴진단 종합': _composite_cached_values(codes, vals, indicators)}
+    if indicators:
+        wsum = sum(float(w) for (*_x, w) in indicators)
+        cache[CALC_SHEET] = {f"E{sum_row}": repr(wsum)}
+    wb._tmpl_cache = cache
     return wb
