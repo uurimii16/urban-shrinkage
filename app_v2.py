@@ -1627,6 +1627,41 @@ def step3_review():
 # ══════════════════════════════════════════════════════════════════════════
 # STEP 4 — 진단 산출
 # ══════════════════════════════════════════════════════════════════════════
+def _container_mem_mb():
+    """(한도MB, 현재사용MB) — 리눅스 컨테이너 cgroup 메모리 한도/사용량.
+    재배포로 메모리가 512로 리셋됐는지 화면·로그로 즉시 확인하기 위함. 실패 시 (None,None)."""
+    limit = used = None
+    for p in ("/sys/fs/cgroup/memory.max",                       # cgroup v2
+              "/sys/fs/cgroup/memory/memory.limit_in_bytes"):    # cgroup v1
+        try:
+            with open(p) as f:
+                v = f.read().strip()
+            if v.isdigit() and int(v) < (1 << 62):               # 'max'(무제한)은 건너뜀
+                limit = int(v) / 1e6; break
+        except Exception:
+            pass
+    for p in ("/sys/fs/cgroup/memory.current",
+              "/sys/fs/cgroup/memory/memory.usage_in_bytes"):
+        try:
+            with open(p) as f:
+                used = int(f.read().strip()) / 1e6; break
+        except Exception:
+            pass
+    return limit, used
+
+
+def _log_mem(tag=""):
+    """현재 메모리를 stdout으로(Cloudtype 로그에 남아 OOM/한도 진단에 쓰임)."""
+    import sys as _sys
+    lim, used = _container_mem_mb()
+    try:
+        import resource as _r
+        peak = _r.getrusage(_r.RUSAGE_SELF).ru_maxrss / 1024.0   # 리눅스=KB→MB
+    except Exception:
+        peak = float("nan")
+    print(f"[MEM {tag}] 한도={lim} 현재={used} 피크RSS={peak:.0f}MB", flush=True, file=_sys.stdout)
+
+
 def step4_run():
     if ss.raw is None:
         st.info("먼저 ② 데이터 입력에서 데이터를 불러오십시오.")
@@ -1788,6 +1823,13 @@ def step4_run():
     import batch_build as BB
     _sgg_list = BB.list_sigungu(raw_selected)
     _multi = len(_sgg_list) >= 2
+    # 서버 실제 메모리 한도 표시 — 재배포로 512로 리셋됐는지 즉시 확인(핵심 진단)
+    _lim, _used = _container_mem_mb()
+    if _lim:
+        _msg = f"🖥 서버 메모리 한도 **{_lim:,.0f}MB**" + (f" · 현재 사용 {_used:,.0f}MB" if _used else "")
+        (st.error if _lim < 800 else st.caption)(
+            _msg + ("  ⚠ 1GB(≈1024MB)로 올렸는데 이 값이 512 근처면 **재배포가 메모리를 리셋한 것** — "
+                    "Cloudtype 대시보드에서 urban-shrinkage 메모리를 다시 1GB로 올려야 합니다." if _lim < 800 else ""))
     if _multi:
         st.warning(
             f"⚠ 현재 불러온 데이터에 **{len(_sgg_list)}개 시군구**가 들어 있습니다 "
@@ -1843,72 +1885,82 @@ def step4_run():
         C.YEAR_POP_LATEST = int(ss.pop_ref_year)
         C.YEAR_BIZ_LATEST = int(ss.biz_ref_year)
 
-        prog = st.progress(0, text="0% · 행정동 복합지수 계산 중")
-        dong_base = E.run(raw_selected, level="dong", grade_method=method, n_classes=int(n_classes))
-        prog.progress(25, text="25% · 집계구 복합지수 계산 중")
-        jgu_base = E.run(raw_selected, level="jgu", grade_method=method, n_classes=int(n_classes))
-        prog.progress(45, text="45% · 추가지표 및 가중치 반영 중")
-        custom_df = ss.custom_df
-        custom_dong = CI.build_scores(custom_df, dong_base[0].index, "dong")
-        custom_jgu = CI.build_scores(custom_df, jgu_base[0].index, "jgu")
-        # 계산식 지표(레시피) — '사용' 중이고 데이터가 있어 제외되지 않은 것만.
-        active_recipes = [rc for rc in ss.recipes
-                          if ss.active_map.get(rc["name"], True) and rc["name"] in indicator_ids]
-        recipe_dong = RE.build_recipe_scores(active_recipes, raw_selected, "dong", dong_base[0].index)
-        recipe_jgu = RE.build_recipe_scores(active_recipes, raw_selected, "jgu", jgu_base[0].index)
-        dong_scores = CI.combine_scores(CI.combine_scores(dong_base[0], custom_dong), recipe_dong)
-        jgu_scores = CI.combine_scores(CI.combine_scores(jgu_base[0], custom_jgu), recipe_jgu)
-        dong_comp = CI.composite(dong_scores, indicator_ids, sector_of, weight_map)
-        jgu_comp = CI.composite(jgu_scores, indicator_ids, sector_of, weight_map)
-        dong_grades = E.assign_grades(dong_comp["종합"], int(n_classes), method)
-        jgu_grades = E.assign_grades(jgu_comp["종합"], int(n_classes), method)
-        dong = (dong_scores, dong_comp, dong_grades, dong_base[3])
-        jgu = (jgu_scores, jgu_comp, jgu_grades, jgu_base[3])
-        prog.progress(65, text="65% · 법적쇠퇴진단 계산 중")
-        legal_dong = LG.run_legal(raw_selected, level="dong")
-        legal_jgu = LG.run_legal(raw_selected, level="jgu")
-        # ── 출력 정렬(선택) — 행정동/집계구 순서 재배열(값 무관·표시순만) ──
-        if sort_mode != "기본(데이터순)":
-            od = _sorted_order(dong_comp, sort_mode)
-            dong_scores, dong_comp, dong_grades = dong_scores.reindex(od), dong_comp.reindex(od), dong_grades.reindex(od)
-            legal_dong = legal_dong.reindex(od)
-            oj = _sorted_order(jgu_comp, sort_mode)
-            jgu_scores, jgu_comp, jgu_grades = jgu_scores.reindex(oj), jgu_comp.reindex(oj), jgu_grades.reindex(oj)
-            legal_jgu = legal_jgu.reindex(oj)
-            dong = (dong_scores, dong_comp, dong_grades, dong[3])
-            jgu = (jgu_scores, jgu_comp, jgu_grades, jgu[3])
+        import gc as _gc, traceback as _tb
+        _log_mem("run-start")
+        try:
+            prog = st.progress(0, text="0% · 행정동 복합지수 계산 중")
+            dong_base = E.run(raw_selected, level="dong", grade_method=method, n_classes=int(n_classes))
+            prog.progress(20, text="20% · 집계구 복합지수 계산 중")
+            jgu_base = E.run(raw_selected, level="jgu", grade_method=method, n_classes=int(n_classes))
+            prog.progress(40, text="40% · 추가지표 및 가중치 반영 중")
+            custom_df = ss.custom_df
+            custom_dong = CI.build_scores(custom_df, dong_base[0].index, "dong")
+            custom_jgu = CI.build_scores(custom_df, jgu_base[0].index, "jgu")
+            # 계산식 지표(레시피) — '사용' 중이고 데이터가 있어 제외되지 않은 것만.
+            active_recipes = [rc for rc in ss.recipes
+                              if ss.active_map.get(rc["name"], True) and rc["name"] in indicator_ids]
+            recipe_dong = RE.build_recipe_scores(active_recipes, raw_selected, "dong", dong_base[0].index)
+            recipe_jgu = RE.build_recipe_scores(active_recipes, raw_selected, "jgu", jgu_base[0].index)
+            dong_scores = CI.combine_scores(CI.combine_scores(dong_base[0], custom_dong), recipe_dong)
+            jgu_scores = CI.combine_scores(CI.combine_scores(jgu_base[0], custom_jgu), recipe_jgu)
+            dong_comp = CI.composite(dong_scores, indicator_ids, sector_of, weight_map)
+            jgu_comp = CI.composite(jgu_scores, indicator_ids, sector_of, weight_map)
+            dong_grades = E.assign_grades(dong_comp["종합"], int(n_classes), method)
+            jgu_grades = E.assign_grades(jgu_comp["종합"], int(n_classes), method)
+            dong = (dong_scores, dong_comp, dong_grades, dong_base[3])
+            jgu = (jgu_scores, jgu_comp, jgu_grades, jgu_base[3])
+            prog.progress(60, text="60% · 법적쇠퇴진단 계산 중")
+            legal_dong = LG.run_legal(raw_selected, level="dong")
+            legal_jgu = LG.run_legal(raw_selected, level="jgu")
+            _log_mem("계산완료")
+            # ── 출력 정렬(선택) — 행정동/집계구 순서 재배열(값 무관·표시순만) ──
+            if sort_mode != "기본(데이터순)":
+                od = _sorted_order(dong_comp, sort_mode)
+                dong_scores, dong_comp, dong_grades = dong_scores.reindex(od), dong_comp.reindex(od), dong_grades.reindex(od)
+                legal_dong = legal_dong.reindex(od)
+                oj = _sorted_order(jgu_comp, sort_mode)
+                jgu_scores, jgu_comp, jgu_grades = jgu_scores.reindex(oj), jgu_comp.reindex(oj), jgu_grades.reindex(oj)
+                legal_jgu = legal_jgu.reindex(oj)
+                dong = (dong_scores, dong_comp, dong_grades, dong[3])
+                jgu = (jgu_scores, jgu_comp, jgu_grades, jgu[3])
 
-        prog.progress(80, text="80% · 통합 엑셀 생성 중")
-        wb = export.build_integrated_workbook(
-            raw_selected, selected_years=ss.selected_years, sheet_options=sheet_options,
-            name_map=ss.name_map, dong_res=dong[:3], jgu_res=jgu[:3],
-            n_classes=int(n_classes), method=method, legal_dong=legal_dong, legal_jgu=legal_jgu,
-            indicator_ids=indicator_ids, label_map=label_map, sector_of=sector_of,
-            weight=weight_map, sign_map=sign_map, code_label_map=ss.code_label_map,
-            formula_mode=download_mode.startswith("수식"), pivot_level=ss.pivot_level,
-            final_only=False, decimals=int(cfg.get("decimals", 2)))
-        if download_mode.startswith("수식"):
-            for sn in ("전주시 복합쇠퇴지수(행정동)", "전주시 복합쇠퇴지수(집계구)"):
-                if sn in wb.sheetnames and not str(wb[sn]["C3"].value).startswith("="):
-                    st.error(f"{sn} 수식 생성 확인 실패: C3 셀이 수식이 아닙니다.")
-                    return
-            if "복합지표값(행정동)" in wb.sheetnames and "전주시 법적쇠퇴진단(행정동)" in wb.sheetnames:
-                if not str(wb["복합지표값(행정동)"]["B2"].value).startswith("="):
-                    st.error("복합지표값(행정동) 인구변화율이 법적진단 참조 수식으로 생성되지 않았습니다.")
-                    return
-        buf = io.BytesIO(); wb.save(buf); buf.seek(0)
-        prog.progress(100, text="100% · 완료")
+            n_decl = int((legal_dong["쇠퇴지역"] == "o").sum())
+            template_values = TE.values_from_scores(jgu_scores, indicator_ids)
+            # 큰 중간객체 즉시 해제(메모리 절약)
+            del dong_base, jgu_base, custom_dong, custom_jgu, recipe_dong, recipe_jgu
+            _gc.collect()
 
-        n_decl = int((legal_dong["쇠퇴지역"] == "o").sum())
-        # 정본 양식용: 집계구별 지표값(기본+커스텀+계산식 전체)을 jgu_scores에서 뽑아 저장
-        template_values = TE.values_from_scores(jgu_scores, indicator_ids)
-        ss.results = {
-            "dong_comp": dong_comp, "dong_grades": dong_grades, "dong_stats": dong[3],
-            "legal_dong": legal_dong, "n_dong": len(dong[0]), "n_jgu": len(jgu[0]),
-            "n_decl": n_decl, "xlsx": buf.getvalue(), "formula": download_mode.startswith("수식"),
-            "final_only": False,
-            "template_values": template_values,
-        }
+            # ── 산출 엑셀 = 정본 9시트(가벼움·원시6+법적·복합 함수 인용) ──
+            #  기존 26시트 통합(build_integrated_workbook)은 행정동·집계구 이중 피벗 등으로
+            #  더 무거워 큰 지역에서 죽었다. 한 시군구는 9시트로 충분하고 이게 정본 형식.
+            prog.progress(80, text="80% · 정본 9시트 엑셀 생성 중 (원시 6시트 포함)")
+            _log_mem("엑셀생성-전")
+            inds = TE.indicators_from_cfg(ss.cfg)
+            wb = TE.build_full_workbook(raw_selected, values=template_values, indicators=inds)
+            prog.progress(92, text="92% · 엑셀 저장 중")
+            buf = io.BytesIO(); TE.save_wb(wb, buf); buf.seek(0)
+            del wb; _gc.collect()
+            _log_mem("엑셀저장-후")
+            prog.progress(100, text="100% · 완료")
+
+            ss.results = {
+                "dong_comp": dong_comp, "dong_grades": dong_grades, "dong_stats": dong[3],
+                "legal_dong": legal_dong, "n_dong": len(dong[0]), "n_jgu": len(jgu[0]),
+                "n_decl": n_decl, "xlsx": buf.getvalue(), "formula": True,
+                "final_only": False, "template_values": template_values, "is_template9": True,
+            }
+        except MemoryError:
+            _log_mem("MemoryError")
+            st.error("메모리 부족(MemoryError)으로 산출이 중단됐습니다. 서버 메모리 한도(위 표시)를 확인하세요 — "
+                     "1GB 미만이면 재배포로 리셋된 것입니다. 그래도 부족하면 이 지역이 너무 커서 "
+                     "시군구를 더 잘게 나눠야 합니다.")
+            return
+        except Exception as e:
+            _log_mem("Exception")
+            st.error(f"산출 중 오류: {type(e).__name__}: {e}")
+            with st.expander("오류 상세(개발자용)"):
+                st.code(_tb.format_exc())
+            return
 
     # 결과 표시
     res = ss.results
@@ -1932,8 +1984,11 @@ def step4_run():
     with t4:
         tile("산출 규모", f"{res['n_dong']} · {res['n_jgu']:,}", "행정동 · 집계구")
 
-    dl_label = "⬇ 통합 xlsx 다운로드 (개별 DATA + 법적 + 복합)"
-    dl_name = ("쇠퇴진단_통합결과_수식.xlsx" if res["formula"] else "쇠퇴진단_통합결과_값.xlsx")
+    _is9 = res.get("is_template9")
+    dl_label = ("⬇ 정본 9시트 xlsx 다운로드 (원시 6시트 + 법적·복합 함수 인용)" if _is9
+                else "⬇ 통합 xlsx 다운로드 (개별 DATA + 법적 + 복합)")
+    dl_name = ("쇠퇴진단_정본9시트.xlsx" if _is9
+               else ("쇠퇴진단_통합결과_수식.xlsx" if res["formula"] else "쇠퇴진단_통합결과_값.xlsx"))
     st.download_button(
         dl_label, res["xlsx"], dl_name,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
