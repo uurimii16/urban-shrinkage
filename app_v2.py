@@ -1683,10 +1683,9 @@ def step4_run():
     sheet_options = ss.get("sheet_options", {"summary": True})
     download_mode = ss.get("download_mode", "수식 엑셀")
 
-    final_only = st.checkbox(
-        "최종 4개 시트만 출력 (중간 DATA·피벗 생략 · 유림_17시 3~6 대응 · 값·자기완결형)",
-        value=ss.get("final_only", False), key="final_only",
-        help="법적쇠퇴진단(행정동/집계구) + 복합쇠퇴지수(행정동/집계구) 4개만 안정적으로 뽑습니다. 켜면 다운로드 모드·집계 단위 설정은 무시됩니다.")
+    # (제거) '최종 4시트(유림_17시)' 옵션 — 정본이 아니라 옛 골든 참조 형식이라 혼동만 줘서 삭제.
+    #   출력은 ▶ 통합(26시트) 또는 정본 9시트('정본 양식 생성' / '선택 시군구 개별 산출')만.
+    final_only = False
     sort_mode = st.selectbox("행정동/집계구 정렬(출력)",
                              ["기본(데이터순)", "행정동코드 오름차순", "행정동코드 내림차순",
                               "종합점수 높은순", "종합점수 낮은순"],
@@ -1799,8 +1798,8 @@ def step4_run():
             indicator_ids=indicator_ids, label_map=label_map, sector_of=sector_of,
             weight=weight_map, sign_map=sign_map, code_label_map=ss.code_label_map,
             formula_mode=download_mode.startswith("수식"), pivot_level=ss.pivot_level,
-            final_only=ss.get("final_only", False), decimals=int(cfg.get("decimals", 2)))
-        if download_mode.startswith("수식") and not ss.get("final_only", False):
+            final_only=False, decimals=int(cfg.get("decimals", 2)))
+        if download_mode.startswith("수식"):
             for sn in ("전주시 복합쇠퇴지수(행정동)", "전주시 복합쇠퇴지수(집계구)"):
                 if sn in wb.sheetnames and not str(wb[sn]["C3"].value).startswith("="):
                     st.error(f"{sn} 수식 생성 확인 실패: C3 셀이 수식이 아닙니다.")
@@ -1819,7 +1818,7 @@ def step4_run():
             "dong_comp": dong_comp, "dong_grades": dong_grades, "dong_stats": dong[3],
             "legal_dong": legal_dong, "n_dong": len(dong[0]), "n_jgu": len(jgu[0]),
             "n_decl": n_decl, "xlsx": buf.getvalue(), "formula": download_mode.startswith("수식"),
-            "final_only": ss.get("final_only", False),
+            "final_only": False,
             "template_values": template_values,
         }
 
@@ -1845,10 +1844,8 @@ def step4_run():
     with t4:
         tile("산출 규모", f"{res['n_dong']} · {res['n_jgu']:,}", "행정동 · 집계구")
 
-    dl_label = ("⬇ 최종 4개 시트 xlsx 다운로드 (법적·복합 × 행정동·집계구)" if res.get("final_only")
-                else "⬇ 통합 xlsx 다운로드 (개별 DATA + 법적 + 복합)")
-    dl_name = ("쇠퇴진단_최종4시트.xlsx" if res.get("final_only")
-               else ("쇠퇴진단_통합결과_수식.xlsx" if res["formula"] else "쇠퇴진단_통합결과_값.xlsx"))
+    dl_label = "⬇ 통합 xlsx 다운로드 (개별 DATA + 법적 + 복합)"
+    dl_name = ("쇠퇴진단_통합결과_수식.xlsx" if res["formula"] else "쇠퇴진단_통합결과_값.xlsx")
     st.download_button(
         dl_label, res["xlsx"], dl_name,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
