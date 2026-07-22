@@ -1780,7 +1780,61 @@ def step4_run():
                 st.download_button("⬇ 선택 시군구 zip 다운로드", ss.pick_zip, "쇠퇴진단_선택시군구.zip",
                                    "application/zip", use_container_width=True, key="dl_pick")
 
-    run_clicked = st.button("▶ 최종 법적 + 복합 진단 산출", type="primary", use_container_width=True)
+    # ── 처리 대상 규모 표시 + 대용량 자동 분리 ──────────────────────────────
+    #  메인 산출은 raw_selected(불러온 데이터 전체)를 '한 워크북'으로 만든다.
+    #  올라온 시군구가 2개 이상이면 원시 행이 폭증해 메모리가 터지므로(예: 성연령 시트
+    #  한 개가 시군구당 3.8만 행 → 여러 시군구면 수십~수백만 행), '통합' 여부와 무관하게
+    #  대용량 원시시트 쓰기 단계(진행표 80%)에서 죽는다. → 시군구별 정본 9시트로 자동 분리.
+    import batch_build as BB
+    _sgg_list = BB.list_sigungu(raw_selected)
+    _multi = len(_sgg_list) >= 2
+    if _multi:
+        st.warning(
+            f"⚠ 현재 불러온 데이터에 **{len(_sgg_list)}개 시군구**가 들어 있습니다 "
+            f"({', '.join(_sgg_list[:8])}{'…' if len(_sgg_list) > 8 else ''}). "
+            "여러 시군구를 **한 파일로 합치면** 원시 행이 폭증해 메모리가 터집니다(진행표 80% '통합 엑셀 생성'에서 죽는 원인). "
+            "그래서 아래 버튼은 **시군구별 정본 9시트로 자동 분리**해 각각 산출합니다(각 130MB급 · 안 터짐 · zip으로 묶어 제공).")
+    elif len(_sgg_list) == 1:
+        st.caption(f"처리 대상: **1개 시군구**({_sgg_list[0]}) — 통합 1파일로 안전하게 산출합니다.")
+
+    run_clicked = st.button(
+        ("▶ 시군구별 정본 9시트 분리 산출 (zip)" if _multi else "▶ 최종 법적 + 복합 진단 산출"),
+        type="primary", use_container_width=True)
+
+    # 다시군구: 모놀리식 통합 대신 시군구별 정본 9시트 zip으로 분리 산출(메모리 안전)
+    if run_clicked and _multi:
+        try:
+            inds = TE.indicators_from_cfg(ss.cfg)
+            active_recipes = [rc for rc in ss.recipes
+                              if ss.active_map.get(rc["name"], True) and rc["name"] in indicator_ids]
+            sido_name_map = dict(getattr(SR, "SIDO_LIST", []))
+            prog = st.progress(0, text=f"0/{len(_sgg_list)} 시군구")
+
+            def _cb_main(d, t, s):
+                prog.progress(int(d / max(1, t) * 100), text=f"{d}/{t} · {s}")
+
+            with st.spinner(f"{len(_sgg_list)}개 시군구를 각각 정본 9시트로 분리 산출 중… (합치지 않아 메모리 안전)"):
+                zbytes, summary = BB.build_batch_zip(
+                    raw_selected, sigungu=_sgg_list, sido_name_map=sido_name_map,
+                    year_pop=int(ss.get("pop_ref_year", C.YEAR_POP_LATEST)),
+                    year_biz=int(ss.get("biz_ref_year", C.YEAR_BIZ_LATEST)),
+                    template_mode=True, indicators=inds, custom_df=ss.custom_df,
+                    recipes=active_recipes, admin_path=TE.DEFAULT_ADMIN_PATH,
+                    result_only=False, progress=_cb_main)
+            ss.batch_zip, ss.batch_summary = zbytes, summary
+            prog.progress(100, text="완료")
+        except Exception as e:
+            st.error(f"시군구별 분리 산출 실패: {e}")
+        run_clicked = False   # 아래 모놀리식(통합 1파일) 경로로 내려가지 않음
+
+    if _multi and ss.get("batch_zip") is not None:
+        ok = int((ss.batch_summary["상태"] == "OK").sum()) if ss.get("batch_summary") is not None else 0
+        st.success(f"시군구별 분리 산출 완료 — 성공 {ok} / {len(ss.batch_summary)}곳 (각 파일 = 정본 9시트, 원시 6시트+법적·복합 함수 인용)")
+        st.dataframe(ss.batch_summary, use_container_width=True, height=220, hide_index=True)
+        st.download_button("⬇ 시군구별 정본 9시트 zip 다운로드", ss.batch_zip,
+                           "쇠퇴진단_시군구별_정본9시트.zip", "application/zip",
+                           type="primary", use_container_width=True, key="dl_batch_main")
+        return
 
     if run_clicked:
         # 엔진 전역에 가중치·기준연도 반영
