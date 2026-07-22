@@ -91,13 +91,27 @@ st.markdown(
 
     div.stDownloadButton>button { border-radius:9px; font-weight:800; }
 
-    /* Streamlit 기본 UI 숨김(우측상단 메뉴·Deploy·하단 푸터·상태위젯) */
+    /* Streamlit 기본 UI 숨김(우측상단 메뉴·Deploy·하단 푸터) */
     #MainMenu { visibility:hidden; }
     [data-testid="stToolbar"] { visibility:hidden; height:0; }
-    [data-testid="stStatusWidget"] { visibility:hidden; }
     [data-testid="stDecoration"] { display:none; }
     header[data-testid="stHeader"] { background:transparent; }
     footer { visibility:hidden; height:0; }
+
+    /* ⏳ 로딩 중 표시 — 서버가 처리(재실행)하는 동안에만 나타나는 상태위젯을
+       화면 상단 가운데에 크고 눈에 띄게 띄운다. 화면이 흐려져도 '멈춘 게 아니라 처리 중'임을 알림. */
+    [data-testid="stStatusWidget"] {
+        visibility:visible !important;
+        position:fixed !important; top:12px; left:50%; transform:translateX(-50%);
+        z-index:100000; background:var(--brand); border-radius:999px;
+        padding:9px 20px 9px 16px; box-shadow:0 8px 26px rgba(16,24,40,.32);
+        display:flex; align-items:center; gap:8px;
+        animation:ld-pulse 1.15s ease-in-out infinite; }
+    [data-testid="stStatusWidget"] * { color:#fff !important; font-weight:800 !important; font-size:.9rem; }
+    [data-testid="stStatusWidget"]::before { content:"⏳"; font-size:1.05rem; }
+    [data-testid="stStatusWidget"]::after { content:"처리 중입니다 … 잠시만 기다려 주세요"; color:#fff; font-weight:800; font-size:.9rem; white-space:nowrap; }
+    @keyframes ld-pulse { 0%,100%{opacity:1; box-shadow:0 8px 26px rgba(46,125,107,.45);}
+                          50%{opacity:.72; box-shadow:0 8px 30px rgba(46,125,107,.75);} }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1845,6 +1859,22 @@ def step4_run():
         TE.FULL_SHEET_NAMES, default=TE.FULL_SHEET_NAMES, key="pick_full_sheets",
         help="예: 복합종합만 고르면 계산방법이 자동 포함되고, 법적종합을 고르면 총인구·총사업체·건축 원시시트가 자동 포함됩니다(함수 인용이 안 깨지게).")
     _keep = (_sheet_pick if _sheet_pick and len(_sheet_pick) < len(TE.FULL_SHEET_NAMES) else None)
+
+    # ── 등급 산출 방법 선택(③설정에도 있지만 산출 화면에서도 바로 선택) ──
+    _gm_opts = ["Natural (Jenks)", "Quantile (등위수)", "Pretty (균등간격)"]
+    _gm_key = {"Natural (Jenks)": "jenks", "Quantile (등위수)": "quantile", "Pretty (균등간격)": "pretty"}
+    _gm_inv = {v: k for k, v in _gm_key.items()}
+    gcol1, gcol2 = st.columns([3, 1])
+    _gm_label = gcol1.selectbox(
+        "🏷 등급 산출 방법", _gm_opts,
+        index=_gm_opts.index(_gm_inv.get(cfg.get("method", "jenks"), _gm_opts[0])),
+        key="grade_method_run",
+        help="화면 순위·타일 등급에 반영됩니다. 정본 복합종합 시트에는 세 방식(등분위·등간격·Natural Break)이 "
+             "모두 열로 나오니, 엑셀에서는 원하는 등급 열을 골라 쓰면 됩니다.")
+    _nc = gcol2.number_input("등급 수", 2, 20, int(cfg.get("n_classes", 10)), 1, key="n_classes_run")
+    method = _gm_key[_gm_label]; n_classes = int(_nc)
+    if isinstance(ss.cfg, dict):
+        ss.cfg["method"] = method; ss.cfg["n_classes"] = n_classes
 
     run_clicked = st.button(
         ("▶ 시군구별 정본 9시트 분리 산출 (zip)" if _multi
