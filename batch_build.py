@@ -168,7 +168,10 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
     template_mode=True: 각 시군구를 ③설정 가중치(indicators)로 '정본 양식'(계산방법+복합종합)으로
       산출(build_one_template). custom_df/recipes로 커스텀·계산식 지표값도 반영. False면 기존 구양식."""
     if out_dir:
-        os.makedirs(out_dir, exist_ok=True)
+        try:                              # 저장 폴더는 부가기능 — 권한/경로 실패해도 zip 산출은 계속
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            out_dir = None
     if year_pop is not None:
         C.YEAR_POP_LATEST = int(year_pop)
     if year_biz is not None:
@@ -200,9 +203,12 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                 sname = (sido_name_map or {}).get(sgg[:2], "")
                 fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
                 zf.writestr(fname, wbuf.getvalue())
-                if out_dir:      # 로컬 저장 폴더에 착착 저장
-                    with open(os.path.join(out_dir, fname), "wb") as fh:
-                        fh.write(wbuf.getvalue())
+                if out_dir:      # 로컬 저장 폴더에 착착 저장(실패해도 zip엔 이미 들어감)
+                    try:
+                        with open(os.path.join(out_dir, fname), "wb") as fh:
+                            fh.write(wbuf.getvalue())
+                    except Exception:
+                        pass
                 rows.append({"시군구코드": sgg, "시도": sname, "파일": fname,
                              "행정동수": stats["n_dong"], "집계구수": stats["n_jgu"],
                              "법적쇠퇴행정동": stats["n_decl"], "상태": "OK"})

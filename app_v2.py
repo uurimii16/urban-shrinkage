@@ -1735,8 +1735,17 @@ def step4_run():
                     ss.pick_out = pick_out
                     ss.pick_zip, ss.pick_summary = zbytes, summary
                     prog.progress(100, text="완료")
-                    if pick_out.strip():
-                        st.info(f"📁 저장 완료: `{pick_out.strip()}` 폴더에 시군구별 정본 양식 저장됨.")
+                    p = pick_out.strip()
+                    if p:
+                        try:
+                            saved = os.path.isdir(p) and any(f.endswith(".xlsx") for f in os.listdir(p))
+                        except Exception:
+                            saved = False
+                        if saved:
+                            st.info(f"📁 저장 완료: `{p}` 폴더에 시군구별 정본 양식 저장됨.")
+                        else:
+                            st.warning(f"⚠ 저장 폴더 `{p}`에 쓸 수 없어(권한/경로) 폴더 저장은 건너뛰었습니다 — "
+                                       "아래 **zip 다운로드**로 받으세요. (폴더 칸을 비우면 zip만 받습니다.)")
                 except Exception as e:
                     st.error(f"선택 시군구 산출 실패: {e}")
             if ss.get("pick_zip") is not None:
