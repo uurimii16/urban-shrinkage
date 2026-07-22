@@ -1923,14 +1923,22 @@ def step4_run():
         C.YEAR_POP_LATEST = int(ss.pop_ref_year)
         C.YEAR_BIZ_LATEST = int(ss.biz_ref_year)
 
-        import gc as _gc, traceback as _tb
+        import gc as _gc, traceback as _tb, time as _time
         _log_mem("run-start")
+        _t0 = _time.time()
+        def _el():                                   # 실제 경과 시간(예측 아님)
+            return f" · {_time.time() - _t0:.0f}초 경과"
+        # 대략 기준: 집계구 수에 비례(웹은 공용 CPU라 로컬보다 느림)
+        _n_gu = int((raw_selected.get("to_in") is not None) and
+                    (raw_selected["to_in"]["집계구"].astype(str).str.len() == 14).sum() or 0)
+        st.caption(f"집계구 약 {_n_gu:,}개 처리 예정 — 보통 **10~40초**(원시데이터 많으면 더). "
+                   "화면이 흐려지고 상단에 '처리 중' 배지가 도는 동안은 정상 작동 중입니다.")
         try:
             prog = st.progress(0, text="0% · 행정동 복합지수 계산 중")
             dong_base = E.run(raw_selected, level="dong", grade_method=method, n_classes=int(n_classes))
-            prog.progress(20, text="20% · 집계구 복합지수 계산 중")
+            prog.progress(20, text="20% · 집계구 복합지수 계산 중" + _el())
             jgu_base = E.run(raw_selected, level="jgu", grade_method=method, n_classes=int(n_classes))
-            prog.progress(40, text="40% · 추가지표 및 가중치 반영 중")
+            prog.progress(40, text="40% · 추가지표 및 가중치 반영 중" + _el())
             custom_df = ss.custom_df
             custom_dong = CI.build_scores(custom_df, dong_base[0].index, "dong")
             custom_jgu = CI.build_scores(custom_df, jgu_base[0].index, "jgu")
@@ -1947,7 +1955,7 @@ def step4_run():
             jgu_grades = E.assign_grades(jgu_comp["종합"], int(n_classes), method)
             dong = (dong_scores, dong_comp, dong_grades, dong_base[3])
             jgu = (jgu_scores, jgu_comp, jgu_grades, jgu_base[3])
-            prog.progress(60, text="60% · 법적쇠퇴진단 계산 중")
+            prog.progress(60, text="60% · 법적쇠퇴진단 계산 중" + _el())
             legal_dong = LG.run_legal(raw_selected, level="dong")
             legal_jgu = LG.run_legal(raw_selected, level="jgu")
             _log_mem("계산완료")
@@ -1971,16 +1979,16 @@ def step4_run():
             # ── 산출 엑셀 = 정본 9시트(가벼움·원시6+법적·복합 함수 인용) ──
             #  기존 26시트 통합(build_integrated_workbook)은 행정동·집계구 이중 피벗 등으로
             #  더 무거워 큰 지역에서 죽었다. 한 시군구는 9시트로 충분하고 이게 정본 형식.
-            prog.progress(80, text="80% · 정본 9시트 엑셀 생성 중 (원시 6시트 포함)")
+            prog.progress(80, text="80% · 정본 9시트 엑셀 생성 중 (원시 6시트 포함)" + _el())
             _log_mem("엑셀생성-전")
             inds = TE.indicators_from_cfg(ss.cfg)
             wb = TE.build_full_workbook(raw_selected, values=template_values, indicators=inds,
                                         keep_sheets=_keep)
-            prog.progress(92, text="92% · 엑셀 저장 중")
+            prog.progress(92, text="92% · 엑셀 저장 중(원시시트가 크면 이 단계가 가장 오래 걸립니다)" + _el())
             buf = io.BytesIO(); TE.save_wb(wb, buf); buf.seek(0)
             del wb; _gc.collect()
             _log_mem("엑셀저장-후")
-            prog.progress(100, text="100% · 완료")
+            prog.progress(100, text="100% · 완료" + _el())
 
             ss.results = {
                 "dong_comp": dong_comp, "dong_grades": dong_grades, "dong_stats": dong[3],
