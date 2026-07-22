@@ -1839,6 +1839,13 @@ def step4_run():
     elif len(_sgg_list) == 1:
         st.caption(f"처리 대상: **1개 시군구**({_sgg_list[0]}) — 통합 1파일로 안전하게 산출합니다.")
 
+    # ── 포함할 시트 선택(정본 9시트 중 골라 꺼내기) ──
+    _sheet_pick = st.multiselect(
+        "📑 포함할 시트 (비우거나 전부 선택 = 9시트 전체 · 함수가 참조하는 시트는 자동 포함)",
+        TE.FULL_SHEET_NAMES, default=TE.FULL_SHEET_NAMES, key="pick_full_sheets",
+        help="예: 복합종합만 고르면 계산방법이 자동 포함되고, 법적종합을 고르면 총인구·총사업체·건축 원시시트가 자동 포함됩니다(함수 인용이 안 깨지게).")
+    _keep = (_sheet_pick if _sheet_pick and len(_sheet_pick) < len(TE.FULL_SHEET_NAMES) else None)
+
     run_clicked = st.button(
         ("▶ 시군구별 정본 9시트 분리 산출 (zip)" if _multi else "▶ 최종 법적 + 복합 진단 산출"),
         type="primary", use_container_width=True)
@@ -1862,7 +1869,7 @@ def step4_run():
                     year_biz=int(ss.get("biz_ref_year", C.YEAR_BIZ_LATEST)),
                     template_mode=True, indicators=inds, custom_df=ss.custom_df,
                     recipes=active_recipes, admin_path=TE.DEFAULT_ADMIN_PATH,
-                    result_only=False, progress=_cb_main)
+                    result_only=False, keep_sheets=_keep, progress=_cb_main)
             ss.batch_zip, ss.batch_summary = zbytes, summary
             prog.progress(100, text="완료")
         except Exception as e:
@@ -1936,7 +1943,8 @@ def step4_run():
             prog.progress(80, text="80% · 정본 9시트 엑셀 생성 중 (원시 6시트 포함)")
             _log_mem("엑셀생성-전")
             inds = TE.indicators_from_cfg(ss.cfg)
-            wb = TE.build_full_workbook(raw_selected, values=template_values, indicators=inds)
+            wb = TE.build_full_workbook(raw_selected, values=template_values, indicators=inds,
+                                        keep_sheets=_keep)
             prog.progress(92, text="92% · 엑셀 저장 중")
             buf = io.BytesIO(); TE.save_wb(wb, buf); buf.seek(0)
             del wb; _gc.collect()
@@ -1994,39 +2002,12 @@ def step4_run():
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary", use_container_width=True)
 
-    # ── 정본 양식(차장님 형태 · ③설정 가중치 그대로 반영) ──
-    with st.container(border=True):
-        st.markdown("**📐 정본 양식 (계산방법 + 복합쇠퇴진단 종합 · 집계구 단위)**")
-        st.caption("③ 설정의 **방향부호·최종가중치**가 첫 시트(계산방법 E24~)에 그대로 써지고, "
-                   "복합쇠퇴진단 종합 시트가 그 셀을 **엑셀 함수로 참조**합니다. "
-                   "설정을 바꿔 다시 산출하면 값이 함수로 자동 재계산됩니다.")
-        if st.button("정본 양식 생성 (가중치 반영)", use_container_width=True, key="build_template"):
-            try:
-                inds = TE.indicators_from_cfg(ss.cfg)
-                with st.spinner("정본 양식 생성 중… (원본 9시트 · 원시데이터 많으면 시간 걸림)"):
-                    # 산출 때 저장한 집계구 지표값(기본+커스텀+계산식) 재활용 → 재계산 없음
-                    # raw가 있으면 9시트 전부, 없으면 2시트(계산방법+복합종합)로 폴백
-                    if ss.get("raw"):
-                        twb = TE.build_full_workbook(ss.raw, values=res.get("template_values"),
-                                                     indicators=inds)
-                    else:
-                        twb = TE.build_composite_workbook(indicators=inds,
-                                                          values=res.get("template_values"))
-                    tbuf = io.BytesIO(); TE.save_wb(twb, tbuf); tbuf.seek(0)
-                ss.results["template_xlsx"] = tbuf.getvalue()
-                st.success(f"정본 양식 생성 완료 — 지표 {len(inds)}개 · "
-                           f"최종가중치 합계 {sum(i[4] for i in inds) * 100:.2f}%")
-            except FileNotFoundError:
-                st.error(f"행정구역코드 표를 찾을 수 없습니다: {TE.DEFAULT_ADMIN_PATH}\n"
-                         "행정구역코드_전국.xlsx 위치를 확인하십시오.")
-            except Exception as e:
-                st.error(f"정본 양식 생성 실패: {e}")
-        if res.get("template_xlsx"):
-            st.download_button(
-                "⬇ 정본 양식 xlsx 다운로드 (계산방법 + 복합종합)",
-                res["template_xlsx"], "복합쇠퇴진단_정본양식.xlsx",
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True, key="dl_template")
+    # (정본 9시트는 위 기본 다운로드 버튼으로 바로 나옵니다 — 계산방법·법적종합·복합종합이
+    #  ③설정 가중치를 엑셀 함수로 참조하고, 파일을 열면 자동 계산됩니다.)
+    if _is9:
+        st.caption("위 다운로드가 **차장님 정본 서식(9시트)**입니다 — 계산방법(가중치)·법적쇠퇴진단 종합·"
+                   "복합쇠퇴진단 종합 + 원시 6시트. 종합표는 **엑셀 함수**(VLOOKUP·Z/T·가중합)로 작성되어 "
+                   "열면 자동 계산되고, ③설정 가중치를 바꿔 다시 산출하면 함수가 그 값을 참조합니다.")
 
     st.markdown("")
     chart_col, table_col = st.columns([2, 3], gap="large")

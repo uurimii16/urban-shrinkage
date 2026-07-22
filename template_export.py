@@ -354,6 +354,8 @@ def write_raw_sheet(ws, df, bucket):
     for c in range(1, 8):
         ws.cell(1, c).font = _HDR_FONT
     if df is None or len(df) == 0:
+        ws.cell(2, 1).value = "입력값없음"          # 이 분류(버킷) 데이터가 없음을 명시
+        ws.cell(2, 1).font = _HDR_FONT
         return 0
     d = df.copy()
     d['집계구'] = d['집계구'].astype(str)
@@ -569,8 +571,37 @@ def write_legal(ws, codes, dong_names, raw_sub, npop, nbiz, npivot):
     return cache
 
 
+# 정본 9시트 이름(빌드 순서) — 시트 선택 UI가 이 목록을 씀
+FULL_SHEET_NAMES = [
+    CALC_SHEET, LEGAL_SHEET, '2 복합쇠퇴진단 종합',
+    '1.1. 총인구', '1.2. 총사업체', '1.3. 건축년도별주택',
+    '2.1. 성연령별인구', '2.2. (산업별)종사자', '2.3. 연건평별주택',
+]
+# 수식 의존관계: 이 시트를 남기면 참조 대상 시트도 자동 포함(함수가 안 깨지게)
+_SHEET_DEPS = {
+    '2 복합쇠퇴진단 종합': [CALC_SHEET],
+    LEGAL_SHEET: ['1.1. 총인구', '1.2. 총사업체', '1.3. 건축년도별주택'],
+}
+
+
+def prune_workbook(wb, keep):
+    """keep(시트명 리스트/집합)에 없는 시트를 제거. 남기는 시트가 함수로 참조하는
+    시트는 자동 포함해 수식이 깨지지 않게 한다. 최소 1시트는 남긴다."""
+    keep = set(keep or [])
+    for s in list(keep):
+        keep.update(_SHEET_DEPS.get(s, []))
+    present = [n for n in wb.sheetnames if n in keep]
+    if not present:
+        return wb                              # 매칭 0 → 방어적으로 원본 유지
+    for name in list(wb.sheetnames):
+        if name not in keep and len(wb.sheetnames) > 1:
+            del wb[name]
+    return wb
+
+
 def build_full_workbook(raw_sub, values=None, admin_path=None,
-                        indicators=TEMPLATE_INDICATORS, selected_years=None):
+                        indicators=TEMPLATE_INDICATORS, selected_years=None,
+                        keep_sheets=None):
     """원본 9시트 전부(계산방법·법적종합·복합종합·원시6) 워크북. 집계구 단위.
     raw_sub: 엔진 raw dict(연도·집계구·CODE·값·행정동코드). values: 복합 지표값(없으면 raw로 계산)."""
     dong_names, _ = load_admin_names(admin_path or DEFAULT_ADMIN_PATH)
@@ -619,6 +650,8 @@ def build_full_workbook(raw_sub, values=None, admin_path=None,
                      rowcount.get('to_in', 0), rowcount.get('to_fa', 0), rowcount.get('ho_pivot', 0))
     cache[LEGAL_SHEET] = lc
     wb._tmpl_cache = cache
+    if keep_sheets:                            # 시트 선택(선택 안 하면 9시트 전부)
+        prune_workbook(wb, keep_sheets)
     return wb
 
 
@@ -787,46 +820,19 @@ def _inject_cached(xml, valmap):
 
 
 def save_wb(wb, target):
-    """wb에 `_tmpl_cache`(시트명→캐시맵)가 있으면 저장 후 해당 시트 수식셀에 값 주입.
-    없으면 그냥 저장. target: 파일경로 또는 write() 가능한 객체."""
-    import io as _io
-    import re as _re
-    import zipfile as _zip
-    cache = getattr(wb, '_tmpl_cache', None)
-    if not cache:
-        wb.save(target); return
-    tmp = _io.BytesIO(); wb.save(tmp); tmp.seek(0)
-    zin = _zip.ZipFile(tmp, 'r')
-    wbxml = zin.read('xl/workbook.xml').decode('utf-8')
-    rels = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
-    rid_tgt = {}
-    for tag in _re.findall(r'<Relationship\b[^>]*/>', rels):
-        _id = _re.search(r'Id="([^"]+)"', tag); _t = _re.search(r'Target="([^"]+)"', tag)
-        if _id and _t:
-            rid_tgt[_id.group(1)] = _t.group(1)
-    title_path = {}
-    for tag in _re.findall(r'<sheet\b[^>]*/>', wbxml):
-        nm = _re.search(r'name="([^"]+)"', tag); rid = _re.search(r'r:id="([^"]+)"', tag)
-        if nm and rid:
-            tgt = rid_tgt.get(rid.group(1), '')
-            if tgt and not tgt.startswith('/'):
-                tgt = 'xl/' + tgt
-            title_path[nm.group(1)] = tgt.lstrip('/')
-    # compresslevel=1: 원시 대용량 시트 재압축 CPU를 크게 줄임(파일은 조금 커지지만 배치 빌드가 빨라짐)
-    out = _io.BytesIO(); zout = _zip.ZipFile(out, 'w', _zip.ZIP_DEFLATED, compresslevel=1)
-    for item in zin.infolist():
-        data = zin.read(item.filename)
-        for title, path in title_path.items():
-            if path == item.filename and cache.get(title):
-                data = _inject_cached(data.decode('utf-8'), cache[title]).encode('utf-8')
-                break
-        zout.writestr(item, data)
-    zout.close(); zin.close(); out.seek(0)
-    if hasattr(target, 'write'):
-        target.write(out.getvalue())
-    else:
-        with open(target, 'wb') as fh:
-            fh.write(out.getvalue())
+    """수식이 '열 때 자동 계산'되도록 설정하고 그대로 저장.
+    (과거엔 정규식으로 워크시트 XML에 캐시값 <v>를 억지 주입했으나, 엑셀이 이를
+     스키마 위반으로 보고 '복구'를 띄우고 복구하면서 수식을 지워버리는 손상이 있었다.
+     → 주입을 제거. fullCalcOnLoad=1 이면 엑셀/한셀이 파일을 열 때 모든 수식을 계산해
+     값이 바로 나온다. 표준 openpyxl 출력이라 손상이 발생하지 않는다.)
+    target: 파일경로 또는 write() 가능한 객체."""
+    try:
+        wb.calculation.fullCalcOnLoad = True   # 열 때 전체 재계산
+        wb.calculation.calcId = 0              # 0 = 강제 재계산 유도
+        wb.calculation.calcMode = "auto"
+    except Exception:
+        pass
+    wb.save(target)
 
 
 def build_composite_workbook(raw_sub=None, admin_path=None, indicators=TEMPLATE_INDICATORS,

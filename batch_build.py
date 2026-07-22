@@ -126,7 +126,7 @@ def build_one_workbook(raw_sub: dict, *, name_map=None, method="jenks", n_classe
 
 
 def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=None,
-                       admin_path=None, result_only=False):
+                       admin_path=None, result_only=False, keep_sheets=None):
     """한 시군구 raw_subset → 정본 양식 Workbook.
     ③설정 가중치·지표목록(indicators=template_export.indicators_from_cfg(cfg))을 그대로 쓰고,
     base+커스텀+계산식 집계구 지표값을 채운다. 각 시군구는 그 시군구 집계구 집합 안에서
@@ -149,7 +149,7 @@ def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=Non
         wb = TE.build_composite_workbook(values=values, indicators=indicators, admin_path=admin_path)
     else:
         wb = TE.build_full_workbook(raw_sub, values=values, indicators=indicators,
-                                    admin_path=admin_path)   # 원본 9시트 전부
+                                    admin_path=admin_path, keep_sheets=keep_sheets)   # 정본 9시트(또는 선택 시트)
     n_dong = len({str(c)[:8] for c in idx})
     stats = {"n_dong": n_dong, "n_jgu": len(idx), "n_decl": 0}
     return wb, stats
@@ -164,7 +164,7 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                     formula_mode=True, selected_years=None, year_pop=None, year_biz=None,
                     out_dir=None, progress=None, group="sigungu",
                     template_mode=False, indicators=None, custom_df=None, recipes=None,
-                    admin_path=None, result_only=False):
+                    admin_path=None, result_only=False, keep_sheets=None):
     """여러 시군구 raw → (zip_bytes, 요약 DataFrame).
     sigungu: 처리할 시군구코드 리스트(None=raw 안 전체).
     year_pop/year_biz: 기준연도(엔진 전역에 설정). None이면 config 현재값 유지.
@@ -198,7 +198,8 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                 if template_mode:
                     wb, stats = build_one_template(
                         parts[sgg], indicators=indicators, custom_df=custom_df,
-                        recipes=recipes, admin_path=admin_path, result_only=result_only)
+                        recipes=recipes, admin_path=admin_path, result_only=result_only,
+                        keep_sheets=keep_sheets)
                 else:
                     wb, stats = build_one_workbook(
                         parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
