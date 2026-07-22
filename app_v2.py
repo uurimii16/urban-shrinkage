@@ -382,14 +382,18 @@ def normalize_weights(active_map, wmap, sector_of):
 # ──────────────────────────────────────────────────────────────────────────
 # 헤더 + 스테퍼
 # ──────────────────────────────────────────────────────────────────────────
+# 배포 버전 도장 — 어느 코드가 실제로 서버에 살아있는지 화면으로 확인하기 위함.
+# (재배포 후 이 값이 바뀌면 새 코드가 반영된 것. 재배포마다 뒤 글자를 올린다.)
+APP_BUILD = "v2026-07-22·g  (엑셀 자동계산·손상해결 · 정본9시트 · ETA)"
 st.markdown(
-    """
+    f"""
     <div class="app-hero">
       <div class="hero-badge">🧭</div>
       <div>
         <div class="hero-kicker">SGIS DECLINE ANALYZER</div>
         <div class="hero-title">쇠퇴진단 자동화 시스템</div>
         <div class="hero-sub">SGIS 원시자료 → 법적쇠퇴진단 · 복합쇠퇴지수 · 검토용 Excel</div>
+        <div class="hero-sub" style="font-size:.72rem;color:#9AA6B2;margin-top:2px;">빌드 {APP_BUILD}</div>
       </div>
     </div>
     """,
@@ -1928,11 +1932,14 @@ def step4_run():
         _t0 = _time.time()
         def _el():                                   # 실제 경과 시간(예측 아님)
             return f" · {_time.time() - _t0:.0f}초 경과"
-        # 대략 기준: 집계구 수에 비례(웹은 공용 CPU라 로컬보다 느림)
-        _n_gu = int((raw_selected.get("to_in") is not None) and
-                    (raw_selected["to_in"]["집계구"].astype(str).str.len() == 14).sum() or 0)
-        st.caption(f"집계구 약 {_n_gu:,}개 처리 예정 — 보통 **10~40초**(원시데이터 많으면 더). "
-                   "화면이 흐려지고 상단에 '처리 중' 배지가 도는 동안은 정상 작동 중입니다.")
+        # 예상 소요(ETA): 원시 총행수 기반(웹 공용 CPU ~800행/초로 보정). 예측이라 ±범위.
+        _tot = sum(int(len(raw_selected.get(b, []))) for b in
+                   ("to_in", "in_age", "to_fa", "cp_bem", "ho_yr", "ho_ar"))
+        _eta = max(15.0, _tot / 800.0)
+        _mm = f"약 {_eta/60:.0f}분" if _eta >= 90 else f"약 {_eta:.0f}초"
+        st.caption(f"원시 약 **{_tot:,}행** 처리 — **예상 {_mm}**(웹 공용 CPU 기준·데이터 많을수록 김). "
+                   "종사자·성연령 원시시트가 크면 이만큼 걸립니다. "
+                   "화면이 흐려지고 상단 '처리 중' 배지가 도는 동안은 정상 작동 중이니 기다려 주세요.")
         try:
             prog = st.progress(0, text="0% · 행정동 복합지수 계산 중")
             dong_base = E.run(raw_selected, level="dong", grade_method=method, n_classes=int(n_classes))
