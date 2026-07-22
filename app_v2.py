@@ -1847,7 +1847,8 @@ def step4_run():
     _keep = (_sheet_pick if _sheet_pick and len(_sheet_pick) < len(TE.FULL_SHEET_NAMES) else None)
 
     run_clicked = st.button(
-        ("▶ 시군구별 정본 9시트 분리 산출 (zip)" if _multi else "▶ 최종 법적 + 복합 진단 산출"),
+        ("▶ 시군구별 정본 9시트 분리 산출 (zip)" if _multi
+         else "▶ 정본 9시트 산출 (법적 + 복합 진단 · 원시 6시트 포함)"),
         type="primary", use_container_width=True)
 
     # 다시군구: 모놀리식 통합 대신 시군구별 정본 9시트 zip으로 분리 산출(메모리 안전)
