@@ -126,11 +126,13 @@ def build_one_workbook(raw_sub: dict, *, name_map=None, method="jenks", n_classe
 
 
 def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=None,
-                       admin_path=None):
-    """한 시군구 raw_subset → 정본 양식(계산방법 + 복합쇠퇴진단 종합) Workbook.
+                       admin_path=None, result_only=False):
+    """한 시군구 raw_subset → 정본 양식 Workbook.
     ③설정 가중치·지표목록(indicators=template_export.indicators_from_cfg(cfg))을 그대로 쓰고,
     base+커스텀+계산식 집계구 지표값을 채운다. 각 시군구는 그 시군구 집계구 집합 안에서
-    독립 표준화(정본 종합의 Z/T가 그 파일 자기 행들로 함수 계산)."""
+    독립 표준화(정본 종합의 Z/T가 그 파일 자기 행들로 함수 계산).
+    result_only=True: **결과만(계산방법 + 복합쇠퇴진단 종합 2시트)** — 원시 6시트(15만 행 종사자 등)를
+      빼서 메모리를 대폭 줄임. 큰 지역도 안 터지고, 지표값·Z·T·부문·종합은 그대로 함수+계산값."""
     import template_export as TE
     import custom_indicators as CI
     import recipe_engine as RE
@@ -143,8 +145,11 @@ def build_one_template(raw_sub: dict, *, indicators, custom_df=None, recipes=Non
     if recipes:
         scores = CI.combine_scores(scores, RE.build_recipe_scores(recipes, raw_sub, "jgu", idx))
     values = TE.values_from_scores(scores, ids)       # base+커스텀+계산식 지표값
-    wb = TE.build_full_workbook(raw_sub, values=values, indicators=indicators,
-                                admin_path=admin_path)   # 원본 9시트 전부
+    if result_only:                                   # 결과만 2시트(원시시트 제외) — 가벼움
+        wb = TE.build_composite_workbook(values=values, indicators=indicators, admin_path=admin_path)
+    else:
+        wb = TE.build_full_workbook(raw_sub, values=values, indicators=indicators,
+                                    admin_path=admin_path)   # 원본 9시트 전부
     n_dong = len({str(c)[:8] for c in idx})
     stats = {"n_dong": n_dong, "n_jgu": len(idx), "n_decl": 0}
     return wb, stats
@@ -159,7 +164,7 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                     formula_mode=True, selected_years=None, year_pop=None, year_biz=None,
                     out_dir=None, progress=None, group="sigungu",
                     template_mode=False, indicators=None, custom_df=None, recipes=None,
-                    admin_path=None):
+                    admin_path=None, result_only=False):
     """여러 시군구 raw → (zip_bytes, 요약 DataFrame).
     sigungu: 처리할 시군구코드 리스트(None=raw 안 전체).
     year_pop/year_biz: 기준연도(엔진 전역에 설정). None이면 config 현재값 유지.
@@ -193,7 +198,7 @@ def build_batch_zip(raw: dict, *, sigungu=None, name_map=None, sido_name_map=Non
                 if template_mode:
                     wb, stats = build_one_template(
                         parts[sgg], indicators=indicators, custom_df=custom_df,
-                        recipes=recipes, admin_path=admin_path)
+                        recipes=recipes, admin_path=admin_path, result_only=result_only)
                 else:
                     wb, stats = build_one_workbook(
                         parts[sgg], name_map=name_map, method=method, n_classes=n_classes,
@@ -305,7 +310,7 @@ def build_sigungu_from_pkls(sgg, pkls, *, template_mode=True, indicators=None,
                             custom_df=None, recipes=None, admin_path=None,
                             name_map=None, sido_name_map=None, selected_years=None,
                             method="jenks", n_classes=10, decimals=2,
-                            final_only=False, formula_mode=True):
+                            final_only=False, formula_mode=True, result_only=False):
     """스풀된 pkl들 → 시군구 1개 xlsx. (fname, xlsx_bytes, 요약row) 반환.
     실패해도 예외 대신 (None, None, 실패row)로 반환(청크 루프가 안 끊기게)."""
     import loader as L
@@ -320,7 +325,7 @@ def build_sigungu_from_pkls(sgg, pkls, *, template_mode=True, indicators=None,
         if template_mode:
             wb, stats = build_one_template(raw_sub, indicators=indicators,
                                            custom_df=custom_df, recipes=recipes,
-                                           admin_path=admin_path)
+                                           admin_path=admin_path, result_only=result_only)
         else:
             wb, stats = build_one_workbook(raw_sub, name_map=name_map, method=method,
                                            n_classes=n_classes, decimals=decimals,

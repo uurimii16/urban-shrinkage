@@ -1168,6 +1168,23 @@ def step1_data():
         variant = "danger" if recognized < 6 else "accent"
         tile("인식 분류", f"{recognized}/6", f"누락 {6 - recognized}개", variant=variant, danger_value=(recognized < 6))
 
+    # ── 누락 분류 상세: '5/6' 옆이 아니라 여기서 어느 분류가 빠졌는지 이름·용도·필요 파일까지 보여줌 ──
+    _BNAME = {"to_in": "총인구", "in_age": "성연령별인구", "to_fa": "총사업체(총괄사업체수)",
+              "cp_bem": "종사자수", "ho_yr": "건축년도별주택", "ho_ar": "연건평별주택"}
+    missing_b = [k for k in REQUIRED_FULL if not len(raw_selected.get(k, []))]
+    if missing_b:
+        miss_names = ", ".join(_BNAME.get(k, k) for k in missing_b)
+        core_miss = [k for k in missing_b if k in REQUIRED_CORE]
+        with st.expander(f"⚠ 누락된 분류 {len(missing_b)}개 — {miss_names}  (여기 눌러 확인)",
+                         expanded=True):
+            st.caption("아래 분류의 데이터가 안 들어왔습니다. **‘파일 예’에 해당하는 SGIS 파일을 추가로 넣으면** 채워집니다.")
+            st.dataframe(missing_bucket_message(missing_b), use_container_width=True, hide_index=True)
+            if not core_miss:
+                st.info("빠진 건 **선택 분류(연면적)** 뿐이라 기본 11지표 진단은 그대로 됩니다.")
+            else:
+                st.warning(f"**필수 분류 {len(core_miss)}개**({', '.join(_BNAME.get(k, k) for k in core_miss)})가 없어 "
+                           "해당 지표는 최종 진단에서 빠집니다. 위 ‘파일 예’ 파일을 추가하거나, 없이 진행하려면 그대로 두십시오.")
+
     pop_cand = bucket_years(raw_selected, ["to_in", "in_age", "ho_yr", "ho_ar"]) or selected_years
     biz_cand = bucket_years(raw_selected, ["to_fa", "cp_bem"]) or selected_years
     r1, r2 = st.columns(2)
@@ -1698,7 +1715,7 @@ def step4_run():
     with st.expander("🏙 선택 시군구 개별 산출 (내 설정 적용 · 시군구별 정본 양식)", expanded=False):
         import batch_build as BB
         st.caption("업로드한 데이터에서 시군구를 **골라**, ③설정의 **가중치·지표 구성 그대로** "
-                   "시군구마다 **정본 양식(계산방법+복합종합) 엑셀을 따로** 만듭니다. "
+                   "시군구마다 **정본 양식 엑셀을 따로** 만듭니다. "
                    "각 시군구는 그 안에서 독립 표준화되고, 커스텀·계산식 지표값도 반영됩니다.")
         sgg_all = BB.list_sigungu(raw_selected)
         if not sgg_all:
@@ -1708,6 +1725,14 @@ def step4_run():
             pick = st.multiselect(
                 "처리할 시군구 선택", sgg_all,
                 format_func=lambda c: f"{c} {sido_name_map.get(c[:2], '')}", key="pick_sigungu")
+            scope = st.radio(
+                "출력 범위",
+                ["결과만 (계산방법 + 복합종합 · 원시시트 제외 · 가벼움/안 터짐)",
+                 "전체 9시트 (원시 6시트 포함 · 무거움)"],
+                index=0, key="pick_scope",
+                help="'결과만'은 15만 행 원시시트를 빼서 메모리를 대폭 줄입니다 → 큰 지역도 안 터집니다. "
+                     "복합쇠퇴진단 결과(지표값·Z·T·부문·종합·등급)는 함수+계산값 그대로 들어갑니다.")
+            result_only = scope.startswith("결과만")
             pick_out = st.text_input(
                 "저장 폴더 경로(선택 · 로컬 실행 시 각 파일을 여기 저장)",
                 value=ss.get("pick_out", ""), key="in_pick_out",
@@ -1730,7 +1755,7 @@ def step4_run():
                             year_biz=int(ss.get("biz_ref_year", C.YEAR_BIZ_LATEST)),
                             template_mode=True, indicators=inds,
                             custom_df=ss.custom_df, recipes=active_recipes,
-                            admin_path=TE.DEFAULT_ADMIN_PATH,
+                            admin_path=TE.DEFAULT_ADMIN_PATH, result_only=result_only,
                             out_dir=(pick_out.strip() or None), progress=_cb)
                     ss.pick_out = pick_out
                     ss.pick_zip, ss.pick_summary = zbytes, summary
