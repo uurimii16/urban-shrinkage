@@ -579,6 +579,10 @@ def _sgis_apply_block():
                                   placeholder="hong@naver.com")
         ap_tel = ac2.text_input("연락처", value=ss.get("apply_tel", ""), key="in_apply_tel", placeholder="010-1234-5678")
         ap_goal = st.text_input("활용 목적/과제명", value=ss.get("apply_goal", "복합쇠퇴진단"), key="in_apply_goal")
+        # 화면 전환(전국 원스톱 ↔ 일반)에도 신청자 정보가 유지되도록 매 렌더 세션에 저장
+        # (기존엔 신청 버튼을 눌러야만 _persist_apply로 저장돼, 버튼 없이 화면을 옮기면 값이 사라졌음)
+        ss.apply_userid, ss.apply_company = ap_userid, ap_company
+        ss.apply_email, ss.apply_tel, ss.apply_goal = ap_email, ap_tel, ap_goal
 
     # ── ③ 지역 선택 (시도 고르면 그 시도의 시군구를 불러옴) ──────────────────
     st.markdown("**③ 지역 선택**")
@@ -696,46 +700,12 @@ def _sgis_apply_block():
             if test_first and ok:
                 st.info("1건 시험 신청 성공 → 위 ‘먼저 1건만 시험 신청’ 체크를 끄고 다시 눌러 전체 신청하십시오.")
 
-    if ab_all.button("🌏 전국 전체 시군구 신청", use_container_width=True,
-                     help="쿠키로 17개 시도의 모든 시군구를 불러와 한 번에 신청합니다(시험 신청 무시). 시간이 다소 걸립니다."):
-        cookie = SR.extract_cookie(cookie_raw or "")
-        items = _apply_build_items(checked)
-        if not cookie:
-            st.error("쿠키를 붙여넣으십시오(JSESSIONID·accessToken이 확인되지 않으면 로그인·복사를 다시 하십시오).")
-        elif not items:
-            st.error("받을 항목·연도를 1개 이상 선택하십시오.")
-        elif not ap_email.strip():
-            st.error("② 신청자 정보의 **이메일**을 입력하십시오 — 비어 있으면 SGIS가 신청을 거부합니다(응답 2).")
-        else:
-            _persist_apply()
-            # 17개 시도의 시군구를 모두 수집(캐시 재사용)
-            cache = ss.sgg_cache
-            allcodes = []
-            lp = st.progress(0, text="전국 시군구 목록 수집 중…")
-            for i, (sc, snm) in enumerate(SR.SIDO_LIST):
-                if sc not in cache:
-                    try:
-                        cache[sc] = SR.fetch_sigungu_list(cookie, sc)
-                    except Exception:
-                        cache[sc] = []
-                allcodes += [c for c, _ in cache.get(sc, [])]
-                lp.progress(int((i + 1) / len(SR.SIDO_LIST) * 100),
-                            text=f"{i + 1}/{len(SR.SIDO_LIST)} 시도 · 누적 {len(allcodes)}곳")
-            allcodes = list(dict.fromkeys(allcodes))
-            if not allcodes:
-                st.error("시군구 목록을 불러오지 못했습니다 — 쿠키 만료 또는 해외 IP 차단(국내 서버에서 실행) 때문일 수 있습니다.")
-            else:
-                applicant = _apply_build_applicant(ap_userid, ap_company, ap_email, ap_tel, ap_goal)
-                st.info(f"전국 **{len(allcodes)}개 시군구** 신청을 시작합니다. (‘시험신청’ 체크는 무시하고 전부 전송)")
-                sp = st.progress(0, text=f"0/{len(allcodes)} 신청")
-
-                def _cb(done, total, sg):
-                    sp.progress(int(done / max(1, total) * 100), text=f"{done}/{total} · {sg}")
-
-                with st.spinner(f"{len(allcodes)}개 시군구 신청 전송 중… (수 분 걸릴 수 있습니다)"):
-                    results = _apply_submit_batch(cookie, allcodes, items, applicant,
-                                                  only_first=False, progress=_cb)
-                _apply_render_results(results)
+    # 전국 전체 신청·다운로드·빌드는 사이드바 '🚀 전국 디폴트 원스톱' 화면으로 일원화함(중복 제거).
+    if ab_all.button("🌏 전국 전체는 원스톱에서 →", use_container_width=True,
+                     help="전국 신청·자동 다운로드·전국 빌드는 '전국 디폴트 원스톱' 전용 화면에서 한 번에 처리합니다."):
+        ss.nationwide = True
+        st.rerun()
+    st.caption("※ **전국 전체**(신청→다운로드→빌드)는 사이드바 **🚀 전국 디폴트 원스톱**에서 청크 처리로 진행하십시오.")
 
 
 def _sgis_input_block(mapping_items):
@@ -1956,6 +1926,37 @@ def step4_run():
                          use_container_width=True, height=420)
 
 
+def _finish_nw_zip(outdir, rows, localdir=None):
+    """청크 빌드로 outdir에 쌓인 시군구 xlsx들 + 요약을 하나의 zip(bytes)으로 묶어 반환.
+    반환: (zip_bytes, 요약 DataFrame). 메모리에 xlsx를 계속 안 들고 디스크에서 읽어 묶음."""
+    import os as _os
+    import io as _io
+    import zipfile as _zip
+    summary = pd.DataFrame(rows) if rows else pd.DataFrame()
+    buf = _io.BytesIO()
+    with _zip.ZipFile(buf, "w", _zip.ZIP_DEFLATED, compresslevel=1) as zf:
+        try:
+            for fn in sorted(_os.listdir(outdir)):
+                fp = _os.path.join(outdir, fn)
+                if _os.path.isfile(fp):
+                    zf.write(fp, fn)
+        except Exception:
+            pass
+        try:
+            csv_bytes = summary.to_csv(index=False).encode("utf-8-sig")
+            zf.writestr("_요약.csv", csv_bytes)
+            if localdir:
+                try:
+                    with open(_os.path.join(localdir, "_요약.csv"), "wb") as fh:
+                        fh.write(csv_bytes)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    buf.seek(0)
+    return buf.getvalue(), summary
+
+
 def nationwide_onestop():
     """🚀 전국 디폴트 원스톱 — 일반 단계별 분석과 분리된 전용 화면.
     전국 시군구를 '디폴트' 형태로 처음부터 끝까지 자동 구축:
@@ -1983,6 +1984,8 @@ def nationwide_onestop():
         st.caption("전국 모든 시군구의 집계구 자료를 **디폴트 필수항목**으로 한 번에 신청합니다. "
                    "승인 알림 이메일이 반드시 필요합니다.")
         nw_email = st.text_input("승인 알림 이메일", value=ss.get("apply_email", ""), key="nw_email")
+        if nw_email.strip():          # 일반 화면과 이메일 공유(화면 전환에도 유지)
+            ss.apply_email = nw_email
         if st.button("🏛 전국 신청 실행", key="nw_apply"):
             ck = SR.extract_cookie(ck_raw or "")
             checked = [n for n in SR.ITEM_CATALOG if SR.ITEM_META[n][0] == "필수"]
@@ -2008,19 +2011,22 @@ def nationwide_onestop():
                     _apply_render_results(results)
                     st.caption("↳ 승인 이메일이 오면 아래 **2번**을 실행하십시오.")
 
-    # ── 2. 자동 다운로드 → 디폴트 빌드 → 저장 ──
+    # ── 2. 자동 다운로드 → 디폴트 빌드 → 저장 (청크 처리: 시군구 몇 개씩 나눠 빌드 → 타임아웃 방지) ──
     with st.container(border=True):
         st.markdown("### 2. 승인 자료 자동 다운로드 → 디폴트 시트 빌드 → 저장")
-        st.caption("승인 이메일을 받은 뒤 클릭하면, 승인된 자료를 **전부 자동 다운로드**해서 시군구별 "
-                   "**디폴트 전체 시트(함수 포함)** 엑셀을 만들고 zip으로 묶습니다.")
-        oc1, oc2 = st.columns([2, 1])
+        st.caption("승인 이메일을 받은 뒤 실행하면, 승인된 자료를 **자동 다운로드**해 디스크에 스풀한 뒤, "
+                   "시군구를 **몇 개씩 나눠(청크)** 빌드합니다. 각 단계가 짧아 **연결 끊김(타임아웃) 없이** "
+                   "서울·전국 같은 대량도 처리되며, 중간에 멈춰도 받은 것까지 zip으로 받을 수 있습니다. "
+                   "출력 = **정본 9시트 양식**(계산방법·법적종합·복합종합·원시 6시트), 함수식은 **계산값이 채워진 채** 저장됩니다.")
+        oc1, oc2 = st.columns([3, 1])
         nw_out = oc1.text_input("저장 폴더 경로(선택 · 로컬 실행 시 착착 저장)", value=ss.get("batch_out", ""),
                                 key="nw_out", placeholder=r"예: D:\쇠퇴진단_전국출력")
-        nw_dec = oc2.number_input("소수점 자릿수", 0, 6, 2, 1, key="nw_dec")
-        nw_fmt = st.selectbox("출력 형식", ["디폴트 전체 (함수 포함 · 집계구+행정동 · 최종표 전부)", "최종 4시트만 (값)"],
-                              index=0, key="nw_fmt")
-        nw_final = nw_fmt.startswith("최종")
-        if st.button("🚀 자동 다운로드 → 전국 빌드 실행", type="primary", key="nw_run"):
+        nw_chunk = oc2.number_input("한 번에 빌드(청크)", 1, 20, int(ss.get("nw_chunk", 3)), 1, key="nw_chunk",
+                                    help="한 요청에서 처리할 시군구 수. 작을수록 요청이 짧아 타임아웃에 안전(2~4 권장).")
+
+        # 1) 다운로드 + 스풀(준비) — 파일을 하나씩 받아 시군구별 pkl로 디스크에 쌓음(메모리 안전)
+        if st.button("① 다운로드 + 준비 (스풀)", key="nw_prep", disabled=bool(ss.get("nw_building"))):
+            import os as _os, tempfile as _tf
             ck = SR.extract_cookie(ck_raw or "")
             if not ck:
                 st.error("쿠키를 붙여넣으십시오.")
@@ -2030,47 +2036,107 @@ def nationwide_onestop():
                         items = SR.fetch_download_list(ck)
                 except Exception as e:
                     items = None
-                    st.error(f"목록 조회 실패: {e} — 쿠키 만료/해외IP 여부 확인.")
+                    st.error(f"목록 조회 실패: {e} — 쿠키 만료/해외 IP 여부를 확인하십시오.")
                 if items is not None and not items:
                     st.warning("다운로드 가능한(승인완료) 자료가 없습니다. 승인 이메일을 기다리십시오.")
                 elif items:
                     ss.apply_cookie = ck_raw
-                    dp = st.progress(0, text=f"0/{len(items)} 다운로드")
-                    files, errs = [], []
+                    # 이전 진행상태 정리
+                    _old = ss.get("nw_tmp")
+                    if _old:
+                        import shutil as _sh
+                        _sh.rmtree(_old, ignore_errors=True)
+                    tmp = _tf.mkdtemp(prefix="nw_")
+                    parts, ymeta, errs = {}, {}, []
+                    dp = st.progress(0, text=f"0/{len(items)} 다운로드·스풀")
                     for n, it in enumerate(items):
                         try:
                             blob = SR.download_zip(ck, it["zippath"])
-                            files.append((f"{it['req_id']}_{it['zippath'].split('/')[-1]}", blob))
+                            fname = f"{it['req_id']}_{it['zippath'].split('/')[-1]}"
+                            BB.spool_files([(fname, blob)], tmp, sgg_parts=parts, year_meta=ymeta)
+                            del blob
                         except Exception as e:
                             errs.append(f"{it['req_id']}: {e}")
-                        dp.progress(int((n + 1) / len(items) * 100), text=f"{n + 1}/{len(items)} 다운로드")
+                        dp.progress(int((n + 1) / len(items) * 100), text=f"{n + 1}/{len(items)} 다운로드·스풀")
+                    order = sorted(parts.keys())
                     if errs:
                         st.warning("일부 다운로드 실패:\n\n" + "\n".join(f"- {e}" for e in errs))
-                    if not files:
-                        st.error("받은 자료가 없습니다.")
+                    if not order:
+                        st.error("스풀된 시군구가 없습니다(자료 형식 확인).")
                     else:
-                        with st.spinner("데이터 정제 중…"):
-                            raw = cached_load_uploads(tuple(files), tuple())
-                        sgg = BB.list_sigungu(raw)
-                        yp = bucket_years(raw, ["to_in", "in_age", "ho_yr", "ho_ar"])
-                        yb = bucket_years(raw, ["to_fa", "cp_bem"])
-                        yp = max(yp) if yp else 2024
-                        yb = max(yb) if yb else 2023
-                        st.info(f"다운로드 {len(files)}건 · 시군구 **{len(sgg)}곳** · 기준연도 인구{yp}/산업{yb} → 빌드 시작")
-                        bp = st.progress(0, text=f"0/{len(sgg)} 시군구 빌드")
-                        zbytes, summary = BB.build_batch_zip(
-                            raw, name_map=ss.name_map, sido_name_map=dict(getattr(SR, "SIDO_LIST", [])),
-                            decimals=int(nw_dec), final_only=nw_final, formula_mode=(not nw_final),
-                            selected_years=None, year_pop=yp, year_biz=yb, out_dir=(nw_out.strip() or None),
-                            progress=lambda d, t, c: bp.progress(int(d / max(1, t) * 100), text=f"{d}/{t} · {c}"))
-                        ss.nw_zip = zbytes
-                        ss.nw_summary = summary
-                        if nw_out.strip():
-                            st.success(f"📁 저장 완료: `{nw_out.strip()}` 폴더")
-        if ss.get("nw_zip") is not None:
-            ok = int((ss.nw_summary["상태"] == "OK").sum())
-            st.success(f"전국 빌드 완료 — 성공 {ok}/{len(ss.nw_summary)}곳")
-            st.dataframe(ss.nw_summary, use_container_width=True, height=260, hide_index=True)
+                        ss.nw_tmp, ss.nw_parts, ss.nw_order = tmp, parts, order
+                        ss.nw_done, ss.nw_rows = [], []
+                        ss.nw_outdir = _os.path.join(tmp, "_out"); _os.makedirs(ss.nw_outdir, exist_ok=True)
+                        ss.nw_localdir = (nw_out.strip() or None)
+                        ss.nw_params = {"template_mode": True,   # 정본 9시트(함수식+계산값 캐시)
+                                        "year_pop": int(ymeta.get("pop", 2024)),
+                                        "year_biz": int(ymeta.get("biz", 2023))}
+                        ss.nw_zip = None
+                        ss.nw_building = True
+                        st.info(f"시군구 **{len(order)}곳** 스풀 완료 · 기준연도 인구{ss.nw_params['year_pop']}/"
+                                f"산업{ss.nw_params['year_biz']} → 청크 빌드 시작합니다.")
+                        st.rerun()
+
+        # 2) 청크 빌드 — K개씩 빌드하고 st.rerun으로 다음 청크 자동 진행(요청이 짧아 타임아웃 안전)
+        if ss.get("nw_building"):
+            order = ss.nw_order
+            total = len(order)
+            ndone = len(ss.nw_done)
+            st.progress(ndone / total if total else 0.0,
+                        text=f"청크 빌드 {ndone}/{total} 시군구 완료…")
+            stop = st.button("⏸ 중지 (여기까지 받은 것만 zip)", key="nw_stop")
+            if stop:
+                ss.nw_building = False
+            else:
+                import os as _os
+                p = ss.nw_params
+                C.YEAR_POP_LATEST = int(p["year_pop"]); C.YEAR_BIZ_LATEST = int(p["year_biz"])
+                sido_map = dict(getattr(SR, "SIDO_LIST", []))
+                inds = TE.indicators_from_cfg(ss.get("cfg") or {})   # 정본 지표(디폴트=기본 12지표)
+                done_set = set(ss.nw_done)
+                remaining = [s for s in order if s not in done_set]
+                for sgg in remaining[:int(nw_chunk)]:
+                    fname, blob, row = BB.build_sigungu_from_pkls(
+                        sgg, ss.nw_parts[sgg], template_mode=True,
+                        indicators=inds, admin_path=TE.DEFAULT_ADMIN_PATH,
+                        sido_name_map=sido_map)
+                    if blob:
+                        try:
+                            with open(_os.path.join(ss.nw_outdir, fname), "wb") as fh:
+                                fh.write(blob)
+                        except Exception:
+                            pass
+                        if ss.get("nw_localdir"):
+                            try:
+                                _os.makedirs(ss.nw_localdir, exist_ok=True)
+                                with open(_os.path.join(ss.nw_localdir, fname), "wb") as fh:
+                                    fh.write(blob)
+                            except Exception:
+                                pass
+                    ss.nw_rows.append(row)
+                    ss.nw_done.append(sgg)
+            # 다음 청크 자동 진행 or 마무리(zip)
+            if ss.get("nw_building") and len(ss.nw_done) < len(order):
+                st.rerun()
+            else:
+                ss.nw_building = False
+                ss.nw_zip, ss.nw_summary = _finish_nw_zip(
+                    ss.nw_outdir, ss.nw_rows, ss.get("nw_localdir"))
+                _tmp = ss.get("nw_tmp")
+                if _tmp:
+                    import shutil as _sh
+                    _sh.rmtree(_tmp, ignore_errors=True)
+                ss.nw_tmp = None; ss.nw_parts = None
+                st.rerun()
+
+        if ss.get("nw_zip") is not None and not ss.get("nw_building"):
+            sm = ss.get("nw_summary")
+            ok = int((sm["상태"] == "OK").sum()) if sm is not None else 0
+            st.success(f"전국 빌드 완료 — 성공 {ok}/{len(sm) if sm is not None else 0}곳")
+            if sm is not None:
+                st.dataframe(sm, use_container_width=True, height=260, hide_index=True)
+            if ss.get("nw_localdir"):
+                st.info(f"📁 저장 완료: `{ss.nw_localdir}` 폴더")
             st.download_button("⬇ 전국 배치 zip 다운로드", ss.nw_zip, "쇠퇴진단_전국배치.zip",
                                "application/zip", type="primary", use_container_width=True)
 

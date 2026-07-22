@@ -245,6 +245,92 @@ def _iter_named_bytes(files):
             yield name, data
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# 청크(chunk) 처리용 — 웹에서 시군구를 몇 개씩 나눠 빌드해 타임아웃 방지
+#   spool_files: 다운로드 파일을 시군구별 pkl로 스풀(누적 가능). 메모리 안전.
+#   build_sigungu_from_pkls: 스풀된 pkl → 시군구 1개 xlsx(정본 또는 구양식).
+# app_v2가 이 둘을 이용해 '준비(스풀) → K개씩 빌드 → zip' 파이프라인을 st.rerun으로 굴린다.
+# ════════════════════════════════════════════════════════════════════════════
+def spool_files(files, tmp, *, sigungu=None, progress=None, sgg_parts=None, year_meta=None):
+    """파일들을 읽어 시군구코드(집계구 앞5)별 pkl로 저장. {sgg:[pkl경로]} 반환.
+    sgg_parts를 넘기면 그 dict에 '누적'(파일을 하나씩 다운로드하며 반복 호출 가능 → 메모리 안전).
+    year_meta(dict)를 넘기면 인구/사업체 기준연도 최댓값을 감지해 {'pop':int,'biz':int}로 채운다.
+    progress(n, None, name, 'spool')."""
+    import loader as L
+    if sgg_parts is None:
+        sgg_parts = {}
+    nfiles = 0
+    for name, data in _iter_named_bytes(files):
+        if L._is_corrupt(name):
+            continue
+        df = L._read_csv_bytes(data)
+        if df is None or len(df) == 0:
+            continue
+        nfiles += 1
+        if progress:
+            progress(nfiles, None, name, "spool")
+        if year_meta is not None:            # 파일명 아닌 CODE 접두어로 부문 판별 → 최신연도 감지
+            try:
+                ymax = pd.to_numeric(df["연도"], errors="coerce").max()
+                if pd.notna(ymax):
+                    b = L._bucket_of(str(df["CODE"].iloc[0]).strip())
+                    key = "biz" if b in ("to_fa", "cp_bem") else "pop"
+                    year_meta[key] = max(year_meta.get(key, 0), int(ymax))
+            except Exception:
+                pass
+        df["집계구"] = df["집계구"].astype(str).str.strip()
+        df = df[df["집계구"].str.len().isin([8, 14])]     # 롤업행(2·5자리) 제거
+        if len(df) == 0:
+            continue
+        df["_sgg"] = df["집계구"].str[:5]
+        for sgg, sub in df.groupby("_sgg"):
+            if sigungu and sgg not in sigungu:
+                continue
+            d = os.path.join(tmp, sgg)
+            os.makedirs(d, exist_ok=True)
+            p = os.path.join(d, f"{len(sgg_parts.get(sgg, []))}.pkl")
+            sub.drop(columns="_sgg").to_pickle(p)
+            sgg_parts.setdefault(sgg, []).append(p)
+        del df
+    return sgg_parts
+
+
+def build_sigungu_from_pkls(sgg, pkls, *, template_mode=True, indicators=None,
+                            custom_df=None, recipes=None, admin_path=None,
+                            name_map=None, sido_name_map=None, selected_years=None,
+                            method="jenks", n_classes=10, decimals=2,
+                            final_only=False, formula_mode=True):
+    """스풀된 pkl들 → 시군구 1개 xlsx. (fname, xlsx_bytes, 요약row) 반환.
+    실패해도 예외 대신 (None, None, 실패row)로 반환(청크 루프가 안 끊기게)."""
+    import loader as L
+    import sheet_builder as SB
+    sname = (sido_name_map or {}).get(sgg[:2], "")
+    try:
+        frames = [pd.read_pickle(p) for p in pkls]
+        raw_sub = L._build_raw_from_rows(frames)
+        del frames
+        if selected_years:
+            raw_sub = SB.filter_raw_years(raw_sub, selected_years)
+        if template_mode:
+            wb, stats = build_one_template(raw_sub, indicators=indicators,
+                                           custom_df=custom_df, recipes=recipes,
+                                           admin_path=admin_path)
+        else:
+            wb, stats = build_one_workbook(raw_sub, name_map=name_map, method=method,
+                                           n_classes=n_classes, decimals=decimals,
+                                           final_only=final_only, formula_mode=formula_mode,
+                                           selected_years=selected_years)
+        del raw_sub
+        wbuf = io.BytesIO(); TE.save_wb(wb, wbuf); wbuf.seek(0)
+        fname = _safe_name(f"{sgg}_{sname}_쇠퇴진단.xlsx")
+        row = {"시군구코드": sgg, "시도": sname, "파일": fname,
+               "집계구수": stats.get("n_jgu", 0), "상태": "OK"}
+        return fname, wbuf.getvalue(), row
+    except Exception as e:
+        return None, None, {"시군구코드": sgg, "시도": sname, "파일": "",
+                            "집계구수": 0, "상태": f"실패: {e}"}
+
+
 def stream_sigungu_templates(files, *, indicators, custom_df=None, recipes=None,
                              admin_path=None, sido_name_map=None, selected_years=None,
                              sigungu=None, out_dir=None, progress=None, tmp_dir=None):

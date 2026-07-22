@@ -796,7 +796,8 @@ def save_wb(wb, target):
             if tgt and not tgt.startswith('/'):
                 tgt = 'xl/' + tgt
             title_path[nm.group(1)] = tgt.lstrip('/')
-    out = _io.BytesIO(); zout = _zip.ZipFile(out, 'w', _zip.ZIP_DEFLATED)
+    # compresslevel=1: 원시 대용량 시트 재압축 CPU를 크게 줄임(파일은 조금 커지지만 배치 빌드가 빨라짐)
+    out = _io.BytesIO(); zout = _zip.ZipFile(out, 'w', _zip.ZIP_DEFLATED, compresslevel=1)
     for item in zin.infolist():
         data = zin.read(item.filename)
         for title, path in title_path.items():
