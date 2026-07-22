@@ -1,54 +1,34 @@
-name: Cloudtype Keep-Alive & Auto-Heal
+name: Cloudtype 재배포 (수동)
 
-# 10분마다:
-#  1) 앱 헬스체크(살아있나) — 살아있으면 그 요청 자체가 warm 유지(콜드스타트 방지)
-#  2) 죽어있으면(무료 '하루 1회 강제 중지' 등) → Cloudtype API로 즉시 재배포해 되살림
-# 사람이 기다리는 게 아니라 백그라운드에서 미리 켜두므로, 강제중지 후에도 10분 내 복구.
+# GitHub Actions 탭 → 이 워크플로 → "Run workflow" 버튼 한 번으로
+# 실앱 워크로드 'urban-shrinkage'를 최신 main 코드로 **강제 재배포**한다.
+# 대시보드 '재배포'가 헛도는(새 배포가 안 생기는) 문제를 우회 — API로 확실히 최신 커밋을 빌드.
 #
-# ★ 필요: GitHub Secret CLOUDTYPE_TOKEN (= Cloudtype API 키). 이미 등록됨.
+# ★ 필요: GitHub Secret CLOUDTYPE_TOKEN (= Cloudtype API 키, 이미 등록됨).
+# ⚠ 첫 실행 후 Cloudtype 대시보드에서 'urban-shrinkage' 워크로드의
+#    메모리/상시가동(하비) 설정이 유지됐는지 한 번 확인할 것. 풀렸으면 다시 구독 리소스로.
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"    # 5분마다 (무료 절전 주기가 짧아 더 자주 데움; Public 리포라 Actions 무제한)
-  workflow_dispatch:          # 손으로 즉시 실행
+  workflow_dispatch:          # 손으로 즉시 실행(버튼)
 
 concurrency:
-  group: cloudtype-heal
+  group: cloudtype-redeploy
   cancel-in-progress: false
 
 jobs:
-  heal:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: 헬스체크 (앱이 살아있는지)
-        id: health
-        env:
-          URL: https://port-0-urban-shrinkage-mr9vlx4ea220fe3d.sel3.cloudtype.app
-        run: |
-          up=false
-          for i in $(seq 1 6); do
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/_stcore/health" || echo 000)
-            echo "시도 $i: /_stcore/health -> $code"
-            if [ "$code" = "200" ]; then up=true; break; fi
-            code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 30 "$URL/" || echo 000)
-            echo "시도 $i: / -> $code"
-            if [ "$code" = "200" ]; then up=true; break; fi
-            sleep 10
-          done
-          echo "up=$up" >> "$GITHUB_OUTPUT"
-          echo "==> 결과: up=$up (true=정상, false=죽음→재배포)"
-
-      - name: 죽어있으면 Cloudtype 재배포 (자동복구)
-        if: steps.health.outputs.up != 'true'
+      - name: Cloudtype 재배포 — 실앱 워크로드(urban-shrinkage)를 최신 main으로
         uses: cloudtype-github-actions/deploy@v1
         with:
           token: ${{ secrets.CLOUDTYPE_TOKEN }}
           project: urban-shrinkage
           stage: main
           yaml: |
-            name: app
+            name: urban-shrinkage
             app: dockerfile
             options:
               ports: 8501
